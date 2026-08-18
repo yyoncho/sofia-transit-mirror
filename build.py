@@ -286,15 +286,21 @@ def main():
     for code, s in stops.items():
         for line_name, directions in s["lines"].items():
             # departures first, then arrivals, so the useful "board here" list leads
-            ordered_dirs = sorted(directions.items(), key=lambda kv: kv[1]["kind"] != "departure")
+            # Only show sections where you can actually board here — a stop
+            # page is a boarding schedule, not an arrivals board.
+            departures = [(n, i) for n, i in directions.items() if i["kind"] == "departure"]
             sections = []
-            for direction_name, info in ordered_dirs:
-                kind_badge = "Departure" if info["kind"] == "departure" else "Arrival only"
+            for direction_name, info in departures:
                 sections.append(
                     f'<section class="line-block">'
-                    f'<h2>{esc(info["label"])} <span class="kind-badge {info["kind"]}">{kind_badge}</span></h2>'
+                    f'<h2>{esc(info["label"])}</h2>'
                     f'{times_table(info["times_by_daytype"])}'
                     f"</section>"
+                )
+            if not departures:
+                sections.append(
+                    '<p class="muted">This is the end of the line here — no onward departures '
+                    "board at this stop for this line.</p>"
                 )
             other_lines = sorted(l for l in s["lines"] if l != line_name)
             other_lines_html = ""
