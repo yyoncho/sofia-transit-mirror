@@ -5,23 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Line 314 — 144-TO SOU (2276)</title>
 <link rel="stylesheet" href="../../../../style.css">
+<script src="../../../../favorites.js"></script>
 
 <script>
-(function () {
+document.addEventListener('DOMContentLoaded', function () {
   var hour = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Sofia' }).format(new Date());
   document.querySelectorAll('tr[data-hour="' + hour + '"]').forEach(function (row) {
     row.classList.add('current-hour');
     var th = row.querySelector('th');
     if (th) th.insertAdjacentHTML('beforeend', ' <span class="now-badge">now</span>');
   });
-})();
+});
+</script>
+
+<script>
+window.STOP = {"line": "314", "code": "2276", "name": "144-TO SOU", "lat": 42.6447599239, "lon": 23.3787171868, "path": "lines/314/stops/2276/index.html"};
+document.addEventListener('DOMContentLoaded', function () {
+  var btn = document.getElementById('fav-btn');
+  function render() {
+    var fav = STM.isFavorite(STOP.line, STOP.code);
+    btn.textContent = fav ? '\u2605 Remove from favorites' : '\u2606 Save to favorites';
+    btn.classList.toggle('is-fav', fav);
+  }
+  btn.addEventListener('click', function () { STM.toggleFavorite(STOP); render(); });
+  render();
+});
 </script>
 
 </head>
 <body>
 <header><a class="home-link" href="../../../../index.html">Sofia Transit Mirror</a></header>
 <main>
-<p class="breadcrumb"><a href="../../index.html">Line 314</a></p><h1>144-TO SOU <span class="code">#2276</span></h1><p class="native-name">144-ТО СОУ</p><p><a href="https://www.openstreetmap.org/?mlat=42.6447599239&amp;mlon=23.3787171868#map=18/42.6447599239/23.3787171868" target="_blank" rel="noopener">View on map</a></p><section class="line-block"><h2>&rarr; Село Бистрица - Ж.К. Младост-2</h2><h3>Weekday</h3>
+<p class="breadcrumb"><a href="../../index.html">Line 314</a></p><h1>144-TO SOU <span class="code">#2276</span></h1><p class="native-name">144-ТО СОУ</p><p class="stop-actions"><a href="https://www.openstreetmap.org/?mlat=42.6447599239&amp;mlon=23.3787171868#map=18/42.6447599239/23.3787171868" target="_blank" rel="noopener">View on map</a> <button id="fav-btn" class="fav-btn">☆ Save to favorites</button></p><section class="line-block"><h2>Departs toward Ж.К. МЛАДОСТ-2 <span class="kind-badge departure">Departure</span></h2><h3>Weekday</h3>
 <table class="timetable"><tbody>
 <tr data-hour="05"><th>05:00</th><td>05:36</td></tr>
 <tr data-hour="06"><th>06:00</th><td>06:19, 06:52</td></tr>
@@ -65,6 +80,6 @@
 <tr data-hour="23"><th>23:00</th><td>23:42</td></tr>
 </tbody></table></section>
 </main>
-<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot.</footer>
+<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot. Departure times are the official fixed timetable, not live GPS predictions — expect a few minutes' drift from the live "Virtual timetable" on the official site.</footer>
 </body>
 </html>

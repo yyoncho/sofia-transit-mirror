@@ -5,12 +5,67 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sofia Transit Mirror</title>
 <link rel="stylesheet" href="./style.css">
+<script src="./favorites.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var favs = STM.getFavorites();
+  var favSection = document.getElementById('favorites-list');
+
+  function renderFavorites() {
+    favs = STM.getFavorites();
+    if (favs.length === 0) {
+      favSection.innerHTML = '<p class="muted">No favorites yet — open a stop page and tap \u201cSave to favorites\u201d.</p>';
+      return;
+    }
+    favSection.innerHTML = favs.map(function (f) {
+      return '<li><a href="' + f.path + '">' + f.name + '</a> ' +
+        '<span class="code">Line ' + f.line + ' &middot; #' + f.code + '</span> ' +
+        '<button class="remove-fav" data-line="' + f.line + '" data-code="' + f.code + '">remove</button></li>';
+    }).join('');
+    favSection.querySelectorAll('.remove-fav').forEach(function (b) {
+      b.addEventListener('click', function () {
+        STM.removeFavorite(b.dataset.line, b.dataset.code);
+        renderFavorites();
+      });
+    });
+  }
+  renderFavorites();
+
+  if (favs.length === 0 || !navigator.geolocation) return;
+
+  var banner = document.getElementById('geo-banner');
+  var cancelBtn = document.getElementById('geo-cancel');
+  var cancelled = false;
+  banner.hidden = false;
+  cancelBtn.hidden = false;
+  banner.textContent = 'Finding your nearest favorite stop\u2026';
+  cancelBtn.addEventListener('click', function () {
+    cancelled = true;
+    banner.hidden = true;
+    cancelBtn.hidden = true;
+  });
+
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    if (cancelled) return;
+    var lat = pos.coords.latitude, lon = pos.coords.longitude;
+    var nearest = favs.map(function (f) {
+      return { f: f, d: STM.haversineKm(lat, lon, f.lat, f.lon) };
+    }).sort(function (a, b) { return a.d - b.d; })[0];
+    banner.innerHTML = 'Nearest favorite: <strong>' + nearest.f.name + '</strong> (' + nearest.d.toFixed(1) + ' km) \u2014 opening\u2026';
+    setTimeout(function () { if (!cancelled) location.href = nearest.f.path; }, 1800);
+  }, function () {
+    banner.hidden = true;
+    cancelBtn.hidden = true;
+  }, { timeout: 8000 });
+});
+</script>
 
 </head>
 <body>
 <header><a class="home-link" href="./index.html">Sofia Transit Mirror</a></header>
 <main>
-<h1>Sofia Transit Mirror</h1><p>A static, link-friendly mirror of Sofia public transport schedules sourced from sofiatraffic.bg. Pick a line below, then a stop — each stop's URL includes its line, since the same physical stop can be served by several lines with different timetables.</p><h2>Lines</h2><ul class="line-list"><li><a href="lines/314/index.html">Line 314</a> <span class="badge">bus</span></li></ul><h2>Stops (59)</h2><ul class="stop-list"><li>115-TI POSHTENSKI KLON <span class="code">#1759</span> &mdash; <a href="lines/314/stops/1759/index.html">314</a></li>
+<h1>Sofia Transit Mirror</h1><p>A static, link-friendly mirror of Sofia public transport schedules sourced from sofiatraffic.bg. Pick a line below, then a stop — each stop's URL includes its line, since the same physical stop can be served by several lines with different timetables.</p><div id="geo-banner" class="geo-banner" hidden></div><button id="geo-cancel" class="geo-cancel" hidden>Stay on this page</button><h2>Your favorites</h2><ul id="favorites-list" class="stop-list"></ul><h2>Lines</h2><ul class="line-list"><li><a href="lines/314/index.html">Line 314</a> <span class="badge">bus</span></li></ul><h2>Stops (59)</h2><ul class="stop-list"><li>115-TI POSHTENSKI KLON <span class="code">#1759</span> &mdash; <a href="lines/314/stops/1759/index.html">314</a></li>
 <li>115-TI POSHTENSKI KLON <span class="code">#1760</span> &mdash; <a href="lines/314/stops/1760/index.html">314</a></li>
 <li>131-VO SOU <span class="code">#0009</span> &mdash; <a href="lines/314/stops/0009/index.html">314</a></li>
 <li>131-VO SOU <span class="code">#0008</span> &mdash; <a href="lines/314/stops/0008/index.html">314</a></li>
@@ -70,6 +125,6 @@
 <li>ZH.K. SOFIYA PARK <span class="code">#2652</span> &mdash; <a href="lines/314/stops/2652/index.html">314</a></li>
 <li>Ж.К. МЛАДОСТ-2 <span class="code">#0664</span> &mdash; <a href="lines/314/stops/0664/index.html">314</a></li></ul>
 </main>
-<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot.</footer>
+<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot. Departure times are the official fixed timetable, not live GPS predictions — expect a few minutes' drift from the live "Virtual timetable" on the official site.</footer>
 </body>
 </html>

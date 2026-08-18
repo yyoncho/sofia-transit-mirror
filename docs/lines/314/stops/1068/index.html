@@ -5,23 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Line 314 — MINATA - PO ZHELANIE (1068)</title>
 <link rel="stylesheet" href="../../../../style.css">
+<script src="../../../../favorites.js"></script>
 
 <script>
-(function () {
+document.addEventListener('DOMContentLoaded', function () {
   var hour = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Sofia' }).format(new Date());
   document.querySelectorAll('tr[data-hour="' + hour + '"]').forEach(function (row) {
     row.classList.add('current-hour');
     var th = row.querySelector('th');
     if (th) th.insertAdjacentHTML('beforeend', ' <span class="now-badge">now</span>');
   });
-})();
+});
+</script>
+
+<script>
+window.STOP = {"line": "314", "code": "1068", "name": "MINATA - PO ZHELANIE", "lat": 42.594427459, "lon": 23.3645441636, "path": "lines/314/stops/1068/index.html"};
+document.addEventListener('DOMContentLoaded', function () {
+  var btn = document.getElementById('fav-btn');
+  function render() {
+    var fav = STM.isFavorite(STOP.line, STOP.code);
+    btn.textContent = fav ? '\u2605 Remove from favorites' : '\u2606 Save to favorites';
+    btn.classList.toggle('is-fav', fav);
+  }
+  btn.addEventListener('click', function () { STM.toggleFavorite(STOP); render(); });
+  render();
+});
 </script>
 
 </head>
 <body>
 <header><a class="home-link" href="../../../../index.html">Sofia Transit Mirror</a></header>
 <main>
-<p class="breadcrumb"><a href="../../index.html">Line 314</a></p><h1>MINATA - PO ZHELANIE <span class="code">#1068</span></h1><p class="native-name">МИНАТА - ПО ЖЕЛАНИЕ</p><p><a href="https://www.openstreetmap.org/?mlat=42.594427459&amp;mlon=23.3645441636#map=18/42.594427459/23.3645441636" target="_blank" rel="noopener">View on map</a></p><section class="line-block"><h2>&rarr; Ж.К. Младост-2 - Село Бистрица</h2><h3>Weekday</h3>
+<p class="breadcrumb"><a href="../../index.html">Line 314</a></p><h1>MINATA - PO ZHELANIE <span class="code">#1068</span></h1><p class="native-name">МИНАТА - ПО ЖЕЛАНИЕ</p><p class="stop-actions"><a href="https://www.openstreetmap.org/?mlat=42.594427459&amp;mlon=23.3645441636#map=18/42.594427459/23.3645441636" target="_blank" rel="noopener">View on map</a> <button id="fav-btn" class="fav-btn">☆ Save to favorites</button></p><section class="line-block"><h2>Departs toward СЕЛО БИСТРИЦА <span class="kind-badge departure">Departure</span></h2><h3>Weekday</h3>
 <table class="timetable"><tbody>
 <tr data-hour="05"><th>05:00</th><td>05:10, 05:48</td></tr>
 <tr data-hour="06"><th>06:00</th><td>06:16, 06:43, 06:59</td></tr>
@@ -65,6 +80,6 @@
 <tr data-hour="23"><th>23:00</th><td>23:13</td></tr>
 </tbody></table></section>
 </main>
-<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot.</footer>
+<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot. Departure times are the official fixed timetable, not live GPS predictions — expect a few minutes' drift from the live "Virtual timetable" on the official site.</footer>
 </body>
 </html>

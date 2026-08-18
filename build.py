@@ -7,6 +7,11 @@ Stop pages are namespaced under their line, since the same physical stop
 code can be served by more than one line: docs/lines/<line>/stops/<code>/.
 Each line also gets an overview page at docs/lines/<line>/index.html
 listing its stops in order, per direction.
+
+Terminus stops show two kinds of sections, matching how the official site's
+own live "Virtual timetable" treats them: a "Departs toward ..." section for
+the route that starts there, and an "Arrives from ..." section for the route
+that ends there — these are genuinely different lists, not duplicates.
 """
 import json
 import shutil
@@ -23,14 +28,122 @@ DAYTYPE_LABEL = {0: "Weekday", 1: "Weekend / Holiday"}
 # (independent of the visitor's own timezone).
 CURRENT_HOUR_SCRIPT = """
 <script>
-(function () {
+document.addEventListener('DOMContentLoaded', function () {
   var hour = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Sofia' }).format(new Date());
   document.querySelectorAll('tr[data-hour="' + hour + '"]').forEach(function (row) {
     row.classList.add('current-hour');
     var th = row.querySelector('th');
     if (th) th.insertAdjacentHTML('beforeend', ' <span class="now-badge">now</span>');
   });
-})();
+});
+</script>
+"""
+
+FAVORITES_JS = """
+(function (global) {
+  var COOKIE_NAME = 'stm_favorites';
+  var MAX_AGE = 60 * 60 * 24 * 365;
+
+  function getFavorites() {
+    var match = document.cookie.match(new RegExp('(?:^|; )' + COOKIE_NAME + '=([^;]*)'));
+    if (!match) return [];
+    try { return JSON.parse(decodeURIComponent(match[1])); } catch (e) { return []; }
+  }
+
+  function setFavorites(list) {
+    document.cookie = COOKIE_NAME + '=' + encodeURIComponent(JSON.stringify(list)) + '; max-age=' + MAX_AGE + '; path=/; samesite=lax';
+  }
+
+  function isFavorite(line, code) {
+    return getFavorites().some(function (f) { return f.line === line && f.code === code; });
+  }
+
+  function toggleFavorite(stop) {
+    var list = getFavorites();
+    var idx = list.findIndex(function (f) { return f.line === stop.line && f.code === stop.code; });
+    if (idx >= 0) { list.splice(idx, 1); } else { list.push(stop); }
+    setFavorites(list);
+    return idx < 0;
+  }
+
+  function removeFavorite(line, code) {
+    setFavorites(getFavorites().filter(function (f) { return !(f.line === line && f.code === code); }));
+  }
+
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    var R = 6371;
+    var dLat = (lat2 - lat1) * Math.PI / 180;
+    var dLon = (lon2 - lon1) * Math.PI / 180;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  global.STM = {
+    getFavorites: getFavorites,
+    setFavorites: setFavorites,
+    isFavorite: isFavorite,
+    toggleFavorite: toggleFavorite,
+    removeFavorite: removeFavorite,
+    haversineKm: haversineKm,
+  };
+})(window);
+"""
+
+HOME_SCRIPT = """
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var favs = STM.getFavorites();
+  var favSection = document.getElementById('favorites-list');
+
+  function renderFavorites() {
+    favs = STM.getFavorites();
+    if (favs.length === 0) {
+      favSection.innerHTML = '<p class="muted">No favorites yet — open a stop page and tap \\u201cSave to favorites\\u201d.</p>';
+      return;
+    }
+    favSection.innerHTML = favs.map(function (f) {
+      return '<li><a href="' + f.path + '">' + f.name + '</a> ' +
+        '<span class="code">Line ' + f.line + ' &middot; #' + f.code + '</span> ' +
+        '<button class="remove-fav" data-line="' + f.line + '" data-code="' + f.code + '">remove</button></li>';
+    }).join('');
+    favSection.querySelectorAll('.remove-fav').forEach(function (b) {
+      b.addEventListener('click', function () {
+        STM.removeFavorite(b.dataset.line, b.dataset.code);
+        renderFavorites();
+      });
+    });
+  }
+  renderFavorites();
+
+  if (favs.length === 0 || !navigator.geolocation) return;
+
+  var banner = document.getElementById('geo-banner');
+  var cancelBtn = document.getElementById('geo-cancel');
+  var cancelled = false;
+  banner.hidden = false;
+  cancelBtn.hidden = false;
+  banner.textContent = 'Finding your nearest favorite stop\\u2026';
+  cancelBtn.addEventListener('click', function () {
+    cancelled = true;
+    banner.hidden = true;
+    cancelBtn.hidden = true;
+  });
+
+  navigator.geolocation.getCurrentPosition(function (pos) {
+    if (cancelled) return;
+    var lat = pos.coords.latitude, lon = pos.coords.longitude;
+    var nearest = favs.map(function (f) {
+      return { f: f, d: STM.haversineKm(lat, lon, f.lat, f.lon) };
+    }).sort(function (a, b) { return a.d - b.d; })[0];
+    banner.innerHTML = 'Nearest favorite: <strong>' + nearest.f.name + '</strong> (' + nearest.d.toFixed(1) + ' km) \\u2014 opening\\u2026';
+    setTimeout(function () { if (!cancelled) location.href = nearest.f.path; }, 1800);
+  }, function () {
+    banner.hidden = true;
+    cancelBtn.hidden = true;
+  }, { timeout: 8000 });
+});
 </script>
 """
 
@@ -52,6 +165,7 @@ def page(title, body, base, extra_head=""):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(title)}</title>
 <link rel="stylesheet" href="{base}/style.css">
+<script src="{base}/favorites.js"></script>
 {extra_head}
 </head>
 <body>
@@ -59,7 +173,7 @@ def page(title, body, base, extra_head=""):
 <main>
 {body}
 </main>
-<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot.</footer>
+<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot. Departure times are the official fixed timetable, not live GPS predictions — expect a few minutes' drift from the live "Virtual timetable" on the official site.</footer>
 </body>
 </html>
 """
@@ -100,7 +214,7 @@ def main():
     OUT_DIR.mkdir()
     (OUT_DIR / "lines").mkdir()
 
-    # stops[code] = {name_en, name, lat, lon, lines: {line_name: {direction: {"times_by_daytype": {...}}}}}
+    # stops[code] = {name_en, name, lat, lon, lines: {line_name: {direction: {...}}}}
     stops = {}
     lines_index = []  # (name, tr_name, color)
     line_stop_order = {}  # line_name -> {direction_name: [codes in order]}
@@ -139,7 +253,13 @@ def main():
                     ordered_codes = seq_codes
             line_stop_order[line_name][direction_name] = ordered_codes
 
-            for code in ordered_codes:
+            def _name(st):
+                return st.get("name_en") or st.get("name") or ""
+
+            origin_name = _name(stop_meta_by_code[ordered_codes[0]]) if ordered_codes else ""
+            dest_name = _name(stop_meta_by_code[ordered_codes[-1]]) if ordered_codes else ""
+
+            for idx, code in enumerate(ordered_codes):
                 st = stop_meta_by_code[code]
                 stops.setdefault(code, {
                     "name_en": st.get("name_en") or st.get("name"),
@@ -148,19 +268,31 @@ def main():
                     "lon": st.get("longitude"),
                     "lines": {},
                 })
+                is_terminus_only = idx == len(ordered_codes) - 1 and len(ordered_codes) > 1
+                if is_terminus_only:
+                    kind = "arrival"
+                    label = f"Arrives from {origin_name}"
+                else:
+                    kind = "departure"
+                    label = f"Departs toward {dest_name}"
                 stops[code]["lines"].setdefault(line_name, {})
                 stops[code]["lines"][line_name][direction_name] = {
                     "times_by_daytype": format_times(raw_times_by_code[code]),
+                    "kind": kind,
+                    "label": label,
                 }
 
     # --- render stop pages, namespaced under their line ---
     for code, s in stops.items():
         for line_name, directions in s["lines"].items():
+            # departures first, then arrivals, so the useful "board here" list leads
+            ordered_dirs = sorted(directions.items(), key=lambda kv: kv[1]["kind"] != "departure")
             sections = []
-            for direction_name, info in directions.items():
+            for direction_name, info in ordered_dirs:
+                kind_badge = "Departure" if info["kind"] == "departure" else "Arrival only"
                 sections.append(
                     f'<section class="line-block">'
-                    f'<h2>&rarr; {esc(direction_name.title())}</h2>'
+                    f'<h2>{esc(info["label"])} <span class="kind-badge {info["kind"]}">{kind_badge}</span></h2>'
                     f'{times_table(info["times_by_daytype"])}'
                     f"</section>"
                 )
@@ -175,14 +307,39 @@ def main():
             map_link = ""
             if s["lat"] and s["lon"]:
                 map_link = (
-                    f'<p><a href="https://www.openstreetmap.org/?mlat={s["lat"]}&amp;mlon={s["lon"]}#map=18/{s["lat"]}/{s["lon"]}" '
-                    f'target="_blank" rel="noopener">View on map</a></p>'
+                    f'<a href="https://www.openstreetmap.org/?mlat={s["lat"]}&amp;mlon={s["lon"]}#map=18/{s["lat"]}/{s["lon"]}" '
+                    f'target="_blank" rel="noopener">View on map</a>'
                 )
+            path = f"lines/{line_name}/stops/{code}/index.html"
+            stop_json = json.dumps({
+                "line": line_name,
+                "code": code,
+                "name": s["name_en"],
+                "lat": float(s["lat"]) if s["lat"] else None,
+                "lon": float(s["lon"]) if s["lon"] else None,
+                "path": path,
+            })
+            fav_script = f"""
+<script>
+window.STOP = {stop_json};
+document.addEventListener('DOMContentLoaded', function () {{
+  var btn = document.getElementById('fav-btn');
+  function render() {{
+    var fav = STM.isFavorite(STOP.line, STOP.code);
+    btn.textContent = fav ? '\\u2605 Remove from favorites' : '\\u2606 Save to favorites';
+    btn.classList.toggle('is-fav', fav);
+  }}
+  btn.addEventListener('click', function () {{ STM.toggleFavorite(STOP); render(); }});
+  render();
+}});
+</script>
+"""
             body = (
                 f'<p class="breadcrumb"><a href="../../index.html">Line {esc(line_name)}</a></p>'
                 f'<h1>{esc(s["name_en"])} <span class="code">#{esc(code)}</span></h1>'
                 f'<p class="native-name">{esc(s["name"])}</p>'
-                f"{map_link}{other_lines_html}"
+                f'<p class="stop-actions">{map_link} <button id="fav-btn" class="fav-btn">☆ Save to favorites</button></p>'
+                f"{other_lines_html}"
                 + "\n".join(sections)
             )
             stop_dir = OUT_DIR / "lines" / line_name / "stops" / code
@@ -192,7 +349,7 @@ def main():
                     f"Line {line_name} — {s['name_en']} ({code})",
                     body,
                     base="../../../..",
-                    extra_head=CURRENT_HOUR_SCRIPT,
+                    extra_head=CURRENT_HOUR_SCRIPT + fav_script,
                 )
             )
 
@@ -231,12 +388,16 @@ def main():
         "sourced from sofiatraffic.bg. Pick a line below, then a stop — each "
         "stop's URL includes its line, since the same physical stop can be "
         "served by several lines with different timetables.</p>"
+        '<div id="geo-banner" class="geo-banner" hidden></div>'
+        '<button id="geo-cancel" class="geo-cancel" hidden>Stay on this page</button>'
+        '<h2>Your favorites</h2><ul id="favorites-list" class="stop-list"></ul>'
         f"<h2>Lines</h2><ul class=\"line-list\">{line_items}</ul>"
         f"<h2>Stops ({len(stops)})</h2><ul class=\"stop-list\">{stop_items}</ul>"
     )
-    (OUT_DIR / "index.html").write_text(page("Sofia Transit Mirror", home_body, base="."))
+    (OUT_DIR / "index.html").write_text(page("Sofia Transit Mirror", home_body, base=".", extra_head=HOME_SCRIPT))
 
     (OUT_DIR / "style.css").write_text(CSS)
+    (OUT_DIR / "favorites.js").write_text(FAVORITES_JS)
     (OUT_DIR / ".nojekyll").write_text("")
 
     stop_page_count = sum(len(s["lines"]) for s in stops.values())
@@ -244,7 +405,7 @@ def main():
 
 
 CSS = """
-:root { color-scheme: light dark; --bg:#fff; --fg:#1a1a1a; --muted:#666; --accent:#BD202E; --border:#ddd; --now-bg: #fff3cd; --now-fg:#7a5b00; }
+:root { color-scheme: light dark; --bg:#fff; --fg:#1a1a1a; --muted:#666; --accent:#BD202E; --border:#ddd; --now-bg: #fff3cd; --now-fg:#7a5b00; --arrival-bg: rgba(128,128,128,.08); }
 @media (prefers-color-scheme: dark) { :root { --bg:#14161a; --fg:#eee; --muted:#999; --border:#333; --now-bg:#4a3b00; --now-fg:#ffe083; } }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--bg); color:var(--fg); font-family:-apple-system,Segoe UI,Roboto,sans-serif; line-height:1.5; }
@@ -258,10 +419,21 @@ h1 { margin-top:0; }
 .native-name { color: var(--muted); margin-top:-0.75rem; }
 .breadcrumb { margin-bottom: .25rem; font-size: .9rem; }
 .also-served { color: var(--muted); font-size: .9rem; }
+.muted { color: var(--muted); }
 ul.stop-list, ol.stop-list, ul.line-list { list-style:none; padding:0; }
 ul.stop-list li, ol.stop-list li, ul.line-list li { padding:.35rem 0; border-bottom:1px solid var(--border); }
 .badge { background:var(--accent); color:#fff; border-radius:4px; padding:.1rem .4rem; font-size:.75rem; }
+.stop-actions { display:flex; align-items:center; gap:1rem; }
+.fav-btn { border:1px solid var(--accent); background:transparent; color:var(--accent); border-radius:6px; padding:.4rem .8rem; font-size:.9rem; cursor:pointer; }
+.fav-btn.is-fav { background:var(--accent); color:#fff; }
+.remove-fav { border:none; background:none; color:var(--muted); text-decoration:underline; font-size:.8rem; cursor:pointer; padding:0 0 0 .5rem; }
+.geo-banner { background:var(--now-bg); color:var(--now-fg); padding:.6rem .9rem; border-radius:6px; margin-bottom:.5rem; }
+.geo-cancel { border:none; background:none; color:var(--muted); text-decoration:underline; font-size:.85rem; cursor:pointer; margin-bottom:1rem; padding:0; }
 .line-block { margin: 1.5rem 0; padding-top: 1rem; border-top: 1px solid var(--border); }
+.line-block h2 { display:flex; align-items:center; gap:.5rem; font-size:1.1rem; }
+.kind-badge { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:3px; padding:.15rem .4rem; }
+.kind-badge.departure { background:var(--accent); color:#fff; }
+.kind-badge.arrival { background:var(--arrival-bg); color:var(--muted); }
 table.timetable { border-collapse:collapse; width:100%; margin:.5rem 0 1rem; font-size: 1.05rem; }
 table.timetable tr { border-bottom: 1px solid var(--border); }
 table.timetable th { text-align:left; padding:.4rem .75rem .4rem 0; vertical-align:top; color:var(--muted); font-weight:600; white-space:nowrap; width:5rem; }
