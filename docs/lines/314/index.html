@@ -7,6 +7,19 @@
 <link rel="stylesheet" href="../../style.css">
 <script src="../../favorites.js"></script>
 
+<link rel="manifest" href="../../manifest.webmanifest">
+<meta name="theme-color" content="#BD202E">
+<link rel="icon" href="../../icons/icon-192.png">
+<link rel="apple-touch-icon" href="../../icons/icon-192.png">
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('../../service-worker.js').catch(function () {});
+  });
+}
+</script>
+
+
 </head>
 <body>
 <header><a class="home-link" href="../../index.html">Sofia Transit Mirror</a></header>

@@ -1,32 +1,42 @@
 
 (function (global) {
-  var COOKIE_NAME = 'stm_favorites';
-  var MAX_AGE = 60 * 60 * 24 * 365;
+  var USER_ID_KEY = 'stm_user_id';
+
+  function getUserId() {
+    try {
+      var id = localStorage.getItem(USER_ID_KEY);
+      if (!id) {
+        id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+        localStorage.setItem(USER_ID_KEY, id);
+      }
+      return id;
+    } catch (e) {
+      // storage unavailable (private mode etc.) — fall back to a per-tab id
+      if (!global.__stmSessionId) global.__stmSessionId = String(Date.now()) + Math.random().toString(16).slice(2);
+      return global.__stmSessionId;
+    }
+  }
 
   function getFavorites() {
-    var match = document.cookie.match(new RegExp('(?:^|; )' + COOKIE_NAME + '=([^;]*)'));
-    if (!match) return [];
-    try { return JSON.parse(decodeURIComponent(match[1])); } catch (e) { return []; }
+    return fetch('/api/favorites?user_id=' + encodeURIComponent(getUserId()))
+      .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); });
   }
 
-  function setFavorites(list) {
-    document.cookie = COOKIE_NAME + '=' + encodeURIComponent(JSON.stringify(list)) + '; max-age=' + MAX_AGE + '; path=/; samesite=lax';
+  function isFavorite(line, code, list) {
+    return list.some(function (f) { return f.line === line && f.code === code; });
   }
 
-  function isFavorite(line, code) {
-    return getFavorites().some(function (f) { return f.line === line && f.code === code; });
-  }
-
-  function toggleFavorite(stop) {
-    var list = getFavorites();
-    var idx = list.findIndex(function (f) { return f.line === stop.line && f.code === stop.code; });
-    if (idx >= 0) { list.splice(idx, 1); } else { list.push(stop); }
-    setFavorites(list);
-    return idx < 0;
+  function addFavorite(stop) {
+    return fetch('/api/favorites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ user_id: getUserId() }, stop)),
+    });
   }
 
   function removeFavorite(line, code) {
-    setFavorites(getFavorites().filter(function (f) { return !(f.line === line && f.code === code); }));
+    var params = new URLSearchParams({ user_id: getUserId(), line: line, code: code });
+    return fetch('/api/favorites?' + params.toString(), { method: 'DELETE' });
   }
 
   function haversineKm(lat1, lon1, lat2, lon2) {
@@ -40,10 +50,10 @@
   }
 
   global.STM = {
+    getUserId: getUserId,
     getFavorites: getFavorites,
-    setFavorites: setFavorites,
     isFavorite: isFavorite,
-    toggleFavorite: toggleFavorite,
+    addFavorite: addFavorite,
     removeFavorite: removeFavorite,
     haversineKm: haversineKm,
   };

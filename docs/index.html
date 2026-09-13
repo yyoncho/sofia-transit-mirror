@@ -7,57 +7,74 @@
 <link rel="stylesheet" href="./style.css">
 <script src="./favorites.js"></script>
 
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#BD202E">
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('./service-worker.js').catch(function () {});
+  });
+}
+</script>
+
+
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  var favs = STM.getFavorites();
   var favSection = document.getElementById('favorites-list');
 
   function renderFavorites() {
-    favs = STM.getFavorites();
-    if (favs.length === 0) {
-      favSection.innerHTML = '<p class="muted">No favorites yet — open a stop page and tap \u201cSave to favorites\u201d.</p>';
-      return;
-    }
-    favSection.innerHTML = favs.map(function (f) {
-      return '<li><a href="' + f.path + '">' + f.name + '</a> ' +
-        '<span class="code">Line ' + f.line + ' &middot; #' + f.code + '</span> ' +
-        '<button class="remove-fav" data-line="' + f.line + '" data-code="' + f.code + '">remove</button></li>';
-    }).join('');
-    favSection.querySelectorAll('.remove-fav').forEach(function (b) {
-      b.addEventListener('click', function () {
-        STM.removeFavorite(b.dataset.line, b.dataset.code);
-        renderFavorites();
+    STM.getFavorites().then(function (favs) {
+      if (favs.length === 0) {
+        favSection.innerHTML = '<p class="muted">No favorites yet — open a stop page and tap \u201cSave to favorites\u201d.</p>';
+        return;
+      }
+      favSection.innerHTML = favs.map(function (f) {
+        return '<li><a href="' + f.path + '">' + f.name + '</a> ' +
+          '<span class="code">Line ' + f.line + ' &middot; #' + f.code + '</span> ' +
+          '<button class="remove-fav" data-line="' + f.line + '" data-code="' + f.code + '">remove</button></li>';
+      }).join('');
+      favSection.querySelectorAll('.remove-fav').forEach(function (b) {
+        b.addEventListener('click', function () {
+          STM.removeFavorite(b.dataset.line, b.dataset.code).then(renderFavorites);
+        });
       });
+      maybeRedirect(favs);
+    }).catch(function () {
+      favSection.innerHTML = '<p class="muted">Could not load favorites right now.</p>';
     });
   }
   renderFavorites();
 
-  if (favs.length === 0 || !navigator.geolocation) return;
+  function maybeRedirect(favs) {
+    if (favs.length === 0 || !navigator.geolocation) return;
 
-  var banner = document.getElementById('geo-banner');
-  var cancelBtn = document.getElementById('geo-cancel');
-  var cancelled = false;
-  banner.hidden = false;
-  cancelBtn.hidden = false;
-  banner.textContent = 'Finding your nearest favorite stop\u2026';
-  cancelBtn.addEventListener('click', function () {
-    cancelled = true;
-    banner.hidden = true;
-    cancelBtn.hidden = true;
-  });
+    var banner = document.getElementById('geo-banner');
+    var cancelBtn = document.getElementById('geo-cancel');
+    var cancelled = false;
+    banner.hidden = false;
+    cancelBtn.hidden = false;
+    banner.textContent = 'Finding your nearest favorite stop\u2026';
+    cancelBtn.addEventListener('click', function () {
+      cancelled = true;
+      banner.hidden = true;
+      cancelBtn.hidden = true;
+    });
 
-  navigator.geolocation.getCurrentPosition(function (pos) {
-    if (cancelled) return;
-    var lat = pos.coords.latitude, lon = pos.coords.longitude;
-    var nearest = favs.map(function (f) {
-      return { f: f, d: STM.haversineKm(lat, lon, f.lat, f.lon) };
-    }).sort(function (a, b) { return a.d - b.d; })[0];
-    banner.innerHTML = 'Nearest favorite: <strong>' + nearest.f.name + '</strong> (' + nearest.d.toFixed(1) + ' km) \u2014 opening\u2026';
-    setTimeout(function () { if (!cancelled) location.href = nearest.f.path; }, 1800);
-  }, function () {
-    banner.hidden = true;
-    cancelBtn.hidden = true;
-  }, { timeout: 8000 });
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      if (cancelled) return;
+      var lat = pos.coords.latitude, lon = pos.coords.longitude;
+      var nearest = favs.map(function (f) {
+        return { f: f, d: STM.haversineKm(lat, lon, f.lat, f.lon) };
+      }).sort(function (a, b) { return a.d - b.d; })[0];
+      banner.innerHTML = 'Nearest favorite: <strong>' + nearest.f.name + '</strong> (' + nearest.d.toFixed(1) + ' km) \u2014 opening\u2026';
+      setTimeout(function () { if (!cancelled) location.href = nearest.f.path; }, 1800);
+    }, function () {
+      banner.hidden = true;
+      cancelBtn.hidden = true;
+    }, { timeout: 8000 });
+  }
 });
 </script>
 

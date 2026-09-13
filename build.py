@@ -41,33 +41,43 @@ document.addEventListener('DOMContentLoaded', function () {
 
 FAVORITES_JS = """
 (function (global) {
-  var COOKIE_NAME = 'stm_favorites';
-  var MAX_AGE = 60 * 60 * 24 * 365;
+  var USER_ID_KEY = 'stm_user_id';
+
+  function getUserId() {
+    try {
+      var id = localStorage.getItem(USER_ID_KEY);
+      if (!id) {
+        id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+        localStorage.setItem(USER_ID_KEY, id);
+      }
+      return id;
+    } catch (e) {
+      // storage unavailable (private mode etc.) — fall back to a per-tab id
+      if (!global.__stmSessionId) global.__stmSessionId = String(Date.now()) + Math.random().toString(16).slice(2);
+      return global.__stmSessionId;
+    }
+  }
 
   function getFavorites() {
-    var match = document.cookie.match(new RegExp('(?:^|; )' + COOKIE_NAME + '=([^;]*)'));
-    if (!match) return [];
-    try { return JSON.parse(decodeURIComponent(match[1])); } catch (e) { return []; }
+    return fetch('/api/favorites?user_id=' + encodeURIComponent(getUserId()))
+      .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); });
   }
 
-  function setFavorites(list) {
-    document.cookie = COOKIE_NAME + '=' + encodeURIComponent(JSON.stringify(list)) + '; max-age=' + MAX_AGE + '; path=/; samesite=lax';
+  function isFavorite(line, code, list) {
+    return list.some(function (f) { return f.line === line && f.code === code; });
   }
 
-  function isFavorite(line, code) {
-    return getFavorites().some(function (f) { return f.line === line && f.code === code; });
-  }
-
-  function toggleFavorite(stop) {
-    var list = getFavorites();
-    var idx = list.findIndex(function (f) { return f.line === stop.line && f.code === stop.code; });
-    if (idx >= 0) { list.splice(idx, 1); } else { list.push(stop); }
-    setFavorites(list);
-    return idx < 0;
+  function addFavorite(stop) {
+    return fetch('/api/favorites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ user_id: getUserId() }, stop)),
+    });
   }
 
   function removeFavorite(line, code) {
-    setFavorites(getFavorites().filter(function (f) { return !(f.line === line && f.code === code); }));
+    var params = new URLSearchParams({ user_id: getUserId(), line: line, code: code });
+    return fetch('/api/favorites?' + params.toString(), { method: 'DELETE' });
   }
 
   function haversineKm(lat1, lon1, lat2, lon2) {
@@ -81,10 +91,10 @@ FAVORITES_JS = """
   }
 
   global.STM = {
+    getUserId: getUserId,
     getFavorites: getFavorites,
-    setFavorites: setFavorites,
     isFavorite: isFavorite,
-    toggleFavorite: toggleFavorite,
+    addFavorite: addFavorite,
     removeFavorite: removeFavorite,
     haversineKm: haversineKm,
   };
@@ -94,57 +104,143 @@ FAVORITES_JS = """
 HOME_SCRIPT = """
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  var favs = STM.getFavorites();
   var favSection = document.getElementById('favorites-list');
 
   function renderFavorites() {
-    favs = STM.getFavorites();
-    if (favs.length === 0) {
-      favSection.innerHTML = '<p class="muted">No favorites yet — open a stop page and tap \\u201cSave to favorites\\u201d.</p>';
-      return;
-    }
-    favSection.innerHTML = favs.map(function (f) {
-      return '<li><a href="' + f.path + '">' + f.name + '</a> ' +
-        '<span class="code">Line ' + f.line + ' &middot; #' + f.code + '</span> ' +
-        '<button class="remove-fav" data-line="' + f.line + '" data-code="' + f.code + '">remove</button></li>';
-    }).join('');
-    favSection.querySelectorAll('.remove-fav').forEach(function (b) {
-      b.addEventListener('click', function () {
-        STM.removeFavorite(b.dataset.line, b.dataset.code);
-        renderFavorites();
+    STM.getFavorites().then(function (favs) {
+      if (favs.length === 0) {
+        favSection.innerHTML = '<p class="muted">No favorites yet — open a stop page and tap \\u201cSave to favorites\\u201d.</p>';
+        return;
+      }
+      favSection.innerHTML = favs.map(function (f) {
+        return '<li><a href="' + f.path + '">' + f.name + '</a> ' +
+          '<span class="code">Line ' + f.line + ' &middot; #' + f.code + '</span> ' +
+          '<button class="remove-fav" data-line="' + f.line + '" data-code="' + f.code + '">remove</button></li>';
+      }).join('');
+      favSection.querySelectorAll('.remove-fav').forEach(function (b) {
+        b.addEventListener('click', function () {
+          STM.removeFavorite(b.dataset.line, b.dataset.code).then(renderFavorites);
+        });
       });
+      maybeRedirect(favs);
+    }).catch(function () {
+      favSection.innerHTML = '<p class="muted">Could not load favorites right now.</p>';
     });
   }
   renderFavorites();
 
-  if (favs.length === 0 || !navigator.geolocation) return;
+  function maybeRedirect(favs) {
+    if (favs.length === 0 || !navigator.geolocation) return;
 
-  var banner = document.getElementById('geo-banner');
-  var cancelBtn = document.getElementById('geo-cancel');
-  var cancelled = false;
-  banner.hidden = false;
-  cancelBtn.hidden = false;
-  banner.textContent = 'Finding your nearest favorite stop\\u2026';
-  cancelBtn.addEventListener('click', function () {
-    cancelled = true;
-    banner.hidden = true;
-    cancelBtn.hidden = true;
-  });
+    var banner = document.getElementById('geo-banner');
+    var cancelBtn = document.getElementById('geo-cancel');
+    var cancelled = false;
+    banner.hidden = false;
+    cancelBtn.hidden = false;
+    banner.textContent = 'Finding your nearest favorite stop\\u2026';
+    cancelBtn.addEventListener('click', function () {
+      cancelled = true;
+      banner.hidden = true;
+      cancelBtn.hidden = true;
+    });
 
-  navigator.geolocation.getCurrentPosition(function (pos) {
-    if (cancelled) return;
-    var lat = pos.coords.latitude, lon = pos.coords.longitude;
-    var nearest = favs.map(function (f) {
-      return { f: f, d: STM.haversineKm(lat, lon, f.lat, f.lon) };
-    }).sort(function (a, b) { return a.d - b.d; })[0];
-    banner.innerHTML = 'Nearest favorite: <strong>' + nearest.f.name + '</strong> (' + nearest.d.toFixed(1) + ' km) \\u2014 opening\\u2026';
-    setTimeout(function () { if (!cancelled) location.href = nearest.f.path; }, 1800);
-  }, function () {
-    banner.hidden = true;
-    cancelBtn.hidden = true;
-  }, { timeout: 8000 });
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      if (cancelled) return;
+      var lat = pos.coords.latitude, lon = pos.coords.longitude;
+      var nearest = favs.map(function (f) {
+        return { f: f, d: STM.haversineKm(lat, lon, f.lat, f.lon) };
+      }).sort(function (a, b) { return a.d - b.d; })[0];
+      banner.innerHTML = 'Nearest favorite: <strong>' + nearest.f.name + '</strong> (' + nearest.d.toFixed(1) + ' km) \\u2014 opening\\u2026';
+      setTimeout(function () { if (!cancelled) location.href = nearest.f.path; }, 1800);
+    }, function () {
+      banner.hidden = true;
+      cancelBtn.hidden = true;
+    }, { timeout: 8000 });
+  }
 });
 </script>
+"""
+
+LIVE_SCRIPT = """
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var el = document.getElementById('live-times');
+  if (!el) return;
+  var expectedLastStop = 'A' + STOP.code;
+
+  function load() {
+    fetch('/api/virtual/' + encodeURIComponent(STOP.code))
+      .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
+      .then(function (data) {
+        var entries = Object.keys(data).map(function (k) { return data[k]; })
+          .filter(function (e) { return e.name === STOP.line && e.last_stop !== expectedLastStop; });
+        if (entries.length === 0) {
+          el.innerHTML = '<p class="muted">No live buses currently tracked for this line here.</p>';
+          return;
+        }
+        el.innerHTML = entries.map(function (e) {
+          var mins = e.details.map(function (d) { return d.t + ' min'; }).join(', ');
+          return '<p class="live-entry"><strong>' + e.route_name + '</strong>: ' + mins + '</p>';
+        }).join('');
+      })
+      .catch(function () {
+        el.innerHTML = '<p class="muted">Live data unavailable right now.</p>';
+      });
+  }
+  load();
+  setInterval(load, 20000);
+});
+</script>
+"""
+
+PWA_HEAD = """
+<link rel="manifest" href="{base}/manifest.webmanifest">
+<meta name="theme-color" content="#BD202E">
+<link rel="icon" href="{base}/icons/icon-192.png">
+<link rel="apple-touch-icon" href="{base}/icons/icon-192.png">
+<script>
+if ('serviceWorker' in navigator) {{
+  window.addEventListener('load', function () {{
+    navigator.serviceWorker.register('{base}/service-worker.js').catch(function () {{}});
+  }});
+}}
+</script>
+"""
+
+MANIFEST = {
+    "name": "Sofia Transit Mirror",
+    "short_name": "SofiaTransit",
+    "description": "Static + live Sofia public transport schedules",
+    "start_url": "./index.html",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#BD202E",
+    "icons": [
+        {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+        {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    ],
+}
+
+SERVICE_WORKER_JS = """
+const CACHE = 'stm-v1';
+self.addEventListener('install', (e) => { self.skipWaiting(); });
+self.addEventListener('activate', (e) => { self.clients.claim(); });
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith('/api/')) return; // never cache live/favorites data
+  event.respondWith(
+    caches.open(CACHE).then(function (cache) {
+      return cache.match(event.request).then(function (cached) {
+        const fetchPromise = fetch(event.request).then(function (res) {
+          if (res.ok) cache.put(event.request, res.clone());
+          return res;
+        }).catch(function () { return cached; });
+        return cached || fetchPromise;
+      });
+    })
+  );
+});
 """
 
 
@@ -166,6 +262,7 @@ def page(title, body, base, extra_head=""):
 <title>{esc(title)}</title>
 <link rel="stylesheet" href="{base}/style.css">
 <script src="{base}/favorites.js"></script>
+{PWA_HEAD.format(base=base)}
 {extra_head}
 </head>
 <body>
@@ -331,11 +428,18 @@ window.STOP = {stop_json};
 document.addEventListener('DOMContentLoaded', function () {{
   var btn = document.getElementById('fav-btn');
   function render() {{
-    var fav = STM.isFavorite(STOP.line, STOP.code);
-    btn.textContent = fav ? '\\u2605 Remove from favorites' : '\\u2606 Save to favorites';
-    btn.classList.toggle('is-fav', fav);
+    STM.getFavorites().then(function (favs) {{
+      var fav = STM.isFavorite(STOP.line, STOP.code, favs);
+      btn.textContent = fav ? '\\u2605 Remove from favorites' : '\\u2606 Save to favorites';
+      btn.classList.toggle('is-fav', fav);
+      btn.disabled = false;
+      btn.onclick = function () {{
+        btn.disabled = true;
+        var action = fav ? STM.removeFavorite(STOP.line, STOP.code) : STM.addFavorite(STOP);
+        action.then(render);
+      }};
+    }}).catch(function () {{ btn.textContent = 'Favorites unavailable'; btn.disabled = true; }});
   }}
-  btn.addEventListener('click', function () {{ STM.toggleFavorite(STOP); render(); }});
   render();
 }});
 </script>
@@ -344,8 +448,10 @@ document.addEventListener('DOMContentLoaded', function () {{
                 f'<p class="breadcrumb"><a href="../../index.html">Line {esc(line_name)}</a></p>'
                 f'<h1>{esc(s["name_en"])} <span class="code">#{esc(code)}</span></h1>'
                 f'<p class="native-name">{esc(s["name"])}</p>'
-                f'<p class="stop-actions">{map_link} <button id="fav-btn" class="fav-btn">☆ Save to favorites</button></p>'
+                f'<p class="stop-actions">{map_link} <button id="fav-btn" class="fav-btn" disabled>☆ Save to favorites</button></p>'
                 f"{other_lines_html}"
+                '<section class="line-block live-block"><h2>Live now</h2>'
+                '<div id="live-times" class="live-times"><p class="muted">Loading live data…</p></div></section>'
                 + "\n".join(sections)
             )
             stop_dir = OUT_DIR / "lines" / line_name / "stops" / code
@@ -355,7 +461,7 @@ document.addEventListener('DOMContentLoaded', function () {{
                     f"Line {line_name} — {s['name_en']} ({code})",
                     body,
                     base="../../../..",
-                    extra_head=CURRENT_HOUR_SCRIPT + fav_script,
+                    extra_head=CURRENT_HOUR_SCRIPT + LIVE_SCRIPT + fav_script,
                 )
             )
 
@@ -404,7 +510,16 @@ document.addEventListener('DOMContentLoaded', function () {{
 
     (OUT_DIR / "style.css").write_text(CSS)
     (OUT_DIR / "favorites.js").write_text(FAVORITES_JS)
+    (OUT_DIR / "manifest.webmanifest").write_text(json.dumps(MANIFEST, indent=2))
+    (OUT_DIR / "service-worker.js").write_text(SERVICE_WORKER_JS)
     (OUT_DIR / ".nojekyll").write_text("")
+
+    icons_src = ROOT / "assets" / "icons"
+    if icons_src.exists():
+        icons_dst = OUT_DIR / "icons"
+        icons_dst.mkdir(exist_ok=True)
+        for f in icons_src.glob("*.png"):
+            shutil.copy(f, icons_dst / f.name)
 
     stop_page_count = sum(len(s["lines"]) for s in stops.values())
     print(f"Built {stop_page_count} stop pages ({len(stops)} unique stops) and {len(line_stop_order)} line pages into {OUT_DIR}")
@@ -447,6 +562,8 @@ table.timetable td { padding:.4rem 0; font-variant-numeric: tabular-nums; letter
 tr.current-hour { background: var(--now-bg); }
 tr.current-hour th { color: var(--now-fg); }
 .now-badge { display:inline-block; background:var(--accent); color:#fff; font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:3px; padding:.1rem .35rem; margin-left:.4rem; vertical-align:middle; }
+.live-block { background: rgba(189,32,46,.06); border-radius:8px; padding:1rem; border-top:none; }
+.live-entry { margin:.3rem 0; }
 """
 
 if __name__ == "__main__":

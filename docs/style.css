@@ -35,3 +35,5 @@ table.timetable td { padding:.4rem 0; font-variant-numeric: tabular-nums; letter
 tr.current-hour { background: var(--now-bg); }
 tr.current-hour th { color: var(--now-fg); }
 .now-badge { display:inline-block; background:var(--accent); color:#fff; font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:3px; padding:.1rem .35rem; margin-left:.4rem; vertical-align:middle; }
+.live-block { background: rgba(189,32,46,.06); border-radius:8px; padding:1rem; border-top:none; }
+.live-entry { margin:.3rem 0; }
