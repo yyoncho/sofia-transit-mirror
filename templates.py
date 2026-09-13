@@ -46,13 +46,50 @@ def times_table(times_by_daytype):
     return "\n".join(parts)
 
 
+def _stop_name(st):
+    return st.get("name_en") or st.get("name") or ""
+
+
+def _walk_direction(route_variants):
+    """Given the weekday+weekend route objects for one direction, return
+    (ordered_codes, stop_meta_by_code, raw_times_by_code) — the longest stop
+    sequence seen plus each stop's metadata and pooled raw time entries.
+    """
+    ordered_codes = []
+    raw_times_by_code = defaultdict(list)
+    stop_meta_by_code = {}
+    for r in route_variants:
+        segs = sorted(r["segments"], key=lambda s: s["sequence"])
+        seq_codes = []
+        for seg in segs:
+            st = seg["stop"]
+            code = st["code"]
+            seq_codes.append(code)
+            stop_meta_by_code[code] = st
+            raw_times_by_code[code].extend(st.get("times", []))
+        if segs:
+            last = segs[-1]["end_stop"]
+            seq_codes.append(last["code"])
+            stop_meta_by_code[last["code"]] = last
+            raw_times_by_code[last["code"]].extend(last.get("times", []))
+        if len(seq_codes) > len(ordered_codes):
+            ordered_codes = seq_codes
+    return ordered_codes, stop_meta_by_code, raw_times_by_code
+
+
+def _last_index(seq, value):
+    """Index of the LAST occurrence of value in seq. Some routes list a stop
+    twice at the tail (a real arrival segment, then a zero-length self-loop
+    segment) — only the final position tells us it's actually the terminus.
+    """
+    return len(seq) - 1 - seq[::-1].index(value)
+
+
 def extract_departures_for_stop(schedule_json, stop_code):
     """Given a raw getSchedule response for one line, return the departure-only
     sections (direction label -> times_by_daytype) for a single stop code.
 
-    Mirrors build.py's per-line extraction, but scoped to one stop instead of
-    building the whole line's stop list — this is what powers lazy, on-demand
-    per-line lookups from a stop-centric page.
+    This is what powers lazy, on-demand per-line lookups from a stop-centric page.
     """
     routes_by_direction = defaultdict(list)
     for r in schedule_json.get("routes", []):
@@ -60,45 +97,44 @@ def extract_departures_for_stop(schedule_json, stop_code):
 
     sections = []
     for direction_name, route_variants in routes_by_direction.items():
-        ordered_codes = []
-        raw_times_by_code = defaultdict(list)
-        stop_meta_by_code = {}
-        for r in route_variants:
-            segs = sorted(r["segments"], key=lambda s: s["sequence"])
-            seq_codes = []
-            for seg in segs:
-                st = seg["stop"]
-                code = st["code"]
-                seq_codes.append(code)
-                stop_meta_by_code[code] = st
-                raw_times_by_code[code].extend(st.get("times", []))
-            if segs:
-                last = segs[-1]["end_stop"]
-                seq_codes.append(last["code"])
-                stop_meta_by_code[last["code"]] = last
-                raw_times_by_code[last["code"]].extend(last.get("times", []))
-            if len(seq_codes) > len(ordered_codes):
-                ordered_codes = seq_codes
+        ordered_codes, stop_meta_by_code, raw_times_by_code = _walk_direction(route_variants)
 
         if stop_code not in ordered_codes:
             continue
-        # Use the LAST occurrence: some routes list a stop twice at the tail
-        # (a real arrival segment, then a zero-length self-loop segment) —
-        # only the final position tells us it's actually the terminus.
-        idx = len(ordered_codes) - 1 - ordered_codes[::-1].index(stop_code)
+        idx = _last_index(ordered_codes, stop_code)
         is_terminus_only = idx == len(ordered_codes) - 1 and len(ordered_codes) > 1
         if is_terminus_only:
             continue  # arrival-only at this stop for this direction — not boardable
 
-        def _name(st):
-            return st.get("name_en") or st.get("name") or ""
-
-        dest_name = _name(stop_meta_by_code[ordered_codes[-1]])
+        dest_name = _stop_name(stop_meta_by_code[ordered_codes[-1]])
         sections.append({
             "label": f"Departs toward {dest_name}",
             "times_by_daytype": format_times(raw_times_by_code[stop_code]),
         })
     return sections
+
+
+def list_stops_for_line(schedule_json):
+    """Given a raw getSchedule response, return the ordered stop list for
+    each direction: [{"direction": name, "stops": [{"code","name"}, ...]}].
+    Powers a generic "browse this line" page for any line, fetched lazily.
+    """
+    routes_by_direction = defaultdict(list)
+    for r in schedule_json.get("routes", []):
+        routes_by_direction[r["name"]].append(r)
+
+    directions = []
+    for direction_name, route_variants in routes_by_direction.items():
+        ordered_codes, stop_meta_by_code, _ = _walk_direction(route_variants)
+        seen = set()
+        stops = []
+        for code in ordered_codes:
+            if code in seen:
+                continue
+            seen.add(code)
+            stops.append({"code": code, "name": _stop_name(stop_meta_by_code[code])})
+        directions.append({"direction": direction_name, "stops": stops})
+    return directions
 
 
 CURRENT_HOUR_SCRIPT = """

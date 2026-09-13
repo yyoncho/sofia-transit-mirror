@@ -34,7 +34,14 @@ from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
-from templates import CURRENT_HOUR_SCRIPT, esc, extract_departures_for_stop, page  # noqa: E402
+from templates import (  # noqa: E402
+    CURRENT_HOUR_SCRIPT,
+    LIVE_SCRIPT,
+    esc,
+    extract_departures_for_stop,
+    list_stops_for_line,
+    page,
+)
 
 BASE = "https://www.sofiatraffic.bg"
 DATA_DIR = ROOT / "data"
@@ -178,6 +185,18 @@ def search_stops(q: str, limit: int = 15):
         if ql in s["name"].lower() or ql in s["code"]
     ][:limit]
     return [{"code": s["code"], "name": s["name"], "lat": float(s["latitude"]), "lon": float(s["longitude"])} for s in matches]
+
+
+@app.get("/api/lines/search")
+def search_lines(q: str, limit: int = 15):
+    ql = q.strip().lower()
+    if not ql:
+        return []
+    # exact-prefix matches on the line number/name first (e.g. "9" -> "9", "94", "94B"),
+    # since line names are short and users mostly type the number they're looking for
+    matches = [l for l in ALL_LINES if l["name"].lower().startswith(ql)]
+    matches.sort(key=lambda l: (len(l["name"]), l["name"]))
+    return [{"ext_id": l["ext_id"], "name": l["name"], "type": l["type"]} for l in matches[:limit]]
 
 
 # --- Live virtual timetable proxy ---
@@ -393,14 +412,35 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 """
-    from templates import LIVE_SCRIPT
-
     html = page(
         f"{stop['name']} (#{code})",
         body,
         static_prefix="/",
         extra_head=f"<script>window.STOP = {stop_json};</script>" + CURRENT_HOUR_SCRIPT + LIVE_SCRIPT + fav_script + STOP_PAGE_SCRIPT,
     )
+    return HTMLResponse(html)
+
+
+# Dynamic "browse this line" page for ANY line, fetched+cached lazily. Lives
+# at /l/{ext_id} (not /lines/{name}/...) to avoid colliding with the
+# pre-built static pages the static mount below serves for line 314.
+@app.get("/l/{ext_id}", response_class=HTMLResponse)
+def line_page(ext_id: str):
+    line = LINES_BY_EXT_ID.get(ext_id)
+    if not line:
+        raise HTTPException(status_code=404, detail="unknown line")
+    data = fetch_schedule_for_line(ext_id)
+    directions = list_stops_for_line(data)
+
+    blocks = []
+    for d in directions:
+        items = "\n".join(
+            f'<li><a href="/stops/{esc(st["code"])}">{esc(st["name"])}</a> <span class="code">#{esc(st["code"])}</span></li>'
+            for st in d["stops"]
+        )
+        blocks.append(f'<h2>{esc(d["direction"].title())}</h2><ol class="stop-list">{items}</ol>')
+    body = f'<h1>Line {esc(line["name"])}</h1>' + "\n".join(blocks)
+    html = page(f"Line {line['name']}", body, static_prefix="/")
     return HTMLResponse(html)
 
 

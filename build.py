@@ -112,6 +112,38 @@ document.addEventListener('DOMContentLoaded', function () {
     }, { timeout: 8000 });
   });
 });
+
+document.addEventListener('DOMContentLoaded', function () {
+  var input = document.getElementById('search-box');
+  var results = document.getElementById('search-results');
+  if (!input) return;
+  var timer = null;
+
+  input.addEventListener('input', function () {
+    clearTimeout(timer);
+    var q = input.value.trim();
+    if (q.length < 1) { results.innerHTML = ''; return; }
+    timer = setTimeout(function () {
+      Promise.all([
+        fetch('/api/stops/search?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }),
+        fetch('/api/lines/search?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }),
+      ]).then(function (both) {
+        var stops = both[0], lines = both[1];
+        if (stops.length === 0 && lines.length === 0) {
+          results.innerHTML = '<li class="muted">No matches (needs the live server, not this static mirror).</li>';
+          return;
+        }
+        var lineItems = lines.map(function (l) {
+          return '<li><a href="/l/' + l.ext_id + '">Line ' + l.name + '</a></li>';
+        }).join('');
+        var stopItems = stops.map(function (s) {
+          return '<li><a href="/stops/' + s.code + '">' + s.name + '</a> <span class="code">#' + s.code + '</span></li>';
+        }).join('');
+        results.innerHTML = lineItems + stopItems;
+      });
+    }, 200);
+  });
+});
 </script>
 """
 
@@ -311,6 +343,9 @@ document.addEventListener('DOMContentLoaded', function () {
         '<p id="nearest-status" class="nearest-status"></p>'
         '<div id="geo-banner" class="geo-banner" hidden></div>'
         '<button id="geo-cancel" class="geo-cancel" hidden>Stay on this page</button>'
+        '<h2>Find a line or stop</h2>'
+        '<input id="search-box" class="search-box" type="text" placeholder="Line number or stop name…" autocomplete="off">'
+        '<ul id="search-results" class="search-results"></ul>'
         '<h2>Your favorites</h2><ul id="favorites-list" class="stop-list"></ul>'
         f"<h2>Pre-built lines</h2><ul class=\"line-list\">{line_items}</ul>"
         f"<h2>Pre-built stops ({len(stops)})</h2><ul class=\"stop-list\">{stop_items}</ul>"
