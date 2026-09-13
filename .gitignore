@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 server/favorites.db
 server/venv/
+server/schedule_cache/

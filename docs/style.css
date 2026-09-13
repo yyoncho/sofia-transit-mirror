@@ -17,12 +17,17 @@ h1 { margin-top:0; }
 ul.stop-list, ol.stop-list, ul.line-list { list-style:none; padding:0; }
 ul.stop-list li, ol.stop-list li, ul.line-list li { padding:.35rem 0; border-bottom:1px solid var(--border); }
 .badge { background:var(--accent); color:#fff; border-radius:4px; padding:.1rem .4rem; font-size:.75rem; }
-.stop-actions { display:flex; align-items:center; gap:1rem; }
+.stop-actions { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
 .fav-btn { border:1px solid var(--accent); background:transparent; color:var(--accent); border-radius:6px; padding:.4rem .8rem; font-size:.9rem; cursor:pointer; }
 .fav-btn.is-fav { background:var(--accent); color:#fff; }
 .remove-fav { border:none; background:none; color:var(--muted); text-decoration:underline; font-size:.8rem; cursor:pointer; padding:0 0 0 .5rem; }
 .geo-banner { background:var(--now-bg); color:var(--now-fg); padding:.6rem .9rem; border-radius:6px; margin-bottom:.5rem; }
 .geo-cancel { border:none; background:none; color:var(--muted); text-decoration:underline; font-size:.85rem; cursor:pointer; margin-bottom:1rem; padding:0; }
+.nearest-btn { display:inline-flex; align-items:center; gap:.5rem; border:none; background:var(--accent); color:#fff; border-radius:8px; padding:.7rem 1.1rem; font-size:1rem; cursor:pointer; margin: .5rem 0 1.5rem; }
+.nearest-status { color: var(--muted); font-size:.9rem; margin: .25rem 0 1rem; }
+.search-box { width:100%; padding:.6rem .8rem; font-size:1rem; border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--fg); }
+.search-results { list-style:none; padding:0; margin-top:.5rem; }
+.search-results li { padding:.35rem 0; border-bottom:1px solid var(--border); }
 .line-block { margin: 1.5rem 0; padding-top: 1rem; border-top: 1px solid var(--border); }
 .line-block h2 { display:flex; align-items:center; gap:.5rem; font-size:1.1rem; }
 .kind-badge { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:3px; padding:.15rem .4rem; }
@@ -37,3 +42,6 @@ tr.current-hour th { color: var(--now-fg); }
 .now-badge { display:inline-block; background:var(--accent); color:#fff; font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:3px; padding:.1rem .35rem; margin-left:.4rem; vertical-align:middle; }
 .live-block { background: rgba(189,32,46,.06); border-radius:8px; padding:1rem; border-top:none; }
 .live-entry { margin:.3rem 0; }
+.line-toggle { display:inline-block; margin:.2rem .3rem .2rem 0; padding:.25rem .6rem; border:1px solid var(--border); border-radius:999px; background:transparent; color:var(--fg); font-size:.85rem; cursor:pointer; }
+.line-toggle.open { border-color:var(--accent); color:var(--accent); }
+.line-schedule { margin-top:.5rem; }

@@ -32,24 +32,23 @@ document.addEventListener('DOMContentLoaded', function () {
       }
       favSection.innerHTML = favs.map(function (f) {
         return '<li><a href="' + f.path + '">' + f.name + '</a> ' +
-          '<span class="code">Line ' + f.line + ' &middot; #' + f.code + '</span> ' +
-          '<button class="remove-fav" data-line="' + f.line + '" data-code="' + f.code + '">remove</button></li>';
+          '<span class="code">#' + f.code + '</span> ' +
+          '<button class="remove-fav" data-code="' + f.code + '">remove</button></li>';
       }).join('');
       favSection.querySelectorAll('.remove-fav').forEach(function (b) {
         b.addEventListener('click', function () {
-          STM.removeFavorite(b.dataset.line, b.dataset.code).then(renderFavorites);
+          STM.removeFavorite(b.dataset.code).then(renderFavorites);
         });
       });
       maybeRedirect(favs);
     }).catch(function () {
-      favSection.innerHTML = '<p class="muted">Could not load favorites right now.</p>';
+      favSection.innerHTML = '<p class="muted">Could not load favorites right now (needs the live server, not this static mirror).</p>';
     });
   }
   renderFavorites();
 
   function maybeRedirect(favs) {
     if (favs.length === 0 || !navigator.geolocation) return;
-
     var banner = document.getElementById('geo-banner');
     var cancelBtn = document.getElementById('geo-cancel');
     var cancelled = false;
@@ -61,7 +60,6 @@ document.addEventListener('DOMContentLoaded', function () {
       banner.hidden = true;
       cancelBtn.hidden = true;
     });
-
     navigator.geolocation.getCurrentPosition(function (pos) {
       if (cancelled) return;
       var lat = pos.coords.latitude, lon = pos.coords.longitude;
@@ -76,13 +74,32 @@ document.addEventListener('DOMContentLoaded', function () {
     }, { timeout: 8000 });
   }
 });
+
+document.addEventListener('DOMContentLoaded', function () {
+  var btn = document.getElementById('nearest-btn');
+  var status = document.getElementById('nearest-status');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    if (!navigator.geolocation) { status.textContent = 'Geolocation not available in this browser.'; return; }
+    status.textContent = 'Finding your location\u2026';
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      var params = new URLSearchParams({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      fetch('/api/stops/nearest?' + params.toString())
+        .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
+        .then(function (stop) { location.href = '/stops/' + stop.code; })
+        .catch(function () { status.textContent = 'Could not reach the live server (this static mirror has no backend).'; });
+    }, function () {
+      status.textContent = 'Location permission denied.';
+    }, { timeout: 8000 });
+  });
+});
 </script>
 
 </head>
 <body>
 <header><a class="home-link" href="./index.html">Sofia Transit Mirror</a></header>
 <main>
-<h1>Sofia Transit Mirror</h1><p>A static, link-friendly mirror of Sofia public transport schedules sourced from sofiatraffic.bg. Pick a line below, then a stop — each stop's URL includes its line, since the same physical stop can be served by several lines with different timetables.</p><div id="geo-banner" class="geo-banner" hidden></div><button id="geo-cancel" class="geo-cancel" hidden>Stay on this page</button><h2>Your favorites</h2><ul id="favorites-list" class="stop-list"></ul><h2>Lines</h2><ul class="line-list"><li><a href="lines/314/index.html">Line 314</a> <span class="badge">bus</span></li></ul><h2>Stops (59)</h2><ul class="stop-list"><li>115-TI POSHTENSKI KLON <span class="code">#1759</span> &mdash; <a href="lines/314/stops/1759/index.html">314</a></li>
+<h1>Sofia Transit Mirror</h1><p>A static, link-friendly mirror of Sofia public transport schedules sourced from sofiatraffic.bg, plus a live server for real-time boards, any-line lookups, and favorites.</p><button id="nearest-btn" class="nearest-btn">📍 Find nearest stop</button><p id="nearest-status" class="nearest-status"></p><div id="geo-banner" class="geo-banner" hidden></div><button id="geo-cancel" class="geo-cancel" hidden>Stay on this page</button><h2>Your favorites</h2><ul id="favorites-list" class="stop-list"></ul><h2>Pre-built lines</h2><ul class="line-list"><li><a href="lines/314/index.html">Line 314</a> <span class="badge">bus</span></li></ul><h2>Pre-built stops (59)</h2><ul class="stop-list"><li>115-TI POSHTENSKI KLON <span class="code">#1759</span> &mdash; <a href="lines/314/stops/1759/index.html">314</a></li>
 <li>115-TI POSHTENSKI KLON <span class="code">#1760</span> &mdash; <a href="lines/314/stops/1760/index.html">314</a></li>
 <li>131-VO SOU <span class="code">#0009</span> &mdash; <a href="lines/314/stops/0009/index.html">314</a></li>
 <li>131-VO SOU <span class="code">#0008</span> &mdash; <a href="lines/314/stops/0008/index.html">314</a></li>

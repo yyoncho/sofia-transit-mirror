@@ -1,105 +1,42 @@
 #!/usr/bin/env python3
 """Build a static mirror of Sofia Traffic line/stop schedules from the JSON
 files in data/ (produced by fetch_line.py) into docs/ (served via GitHub
-Pages from the main branch's /docs folder).
+Pages from the main branch's /docs folder, and also served as the static
+asset root — style.css, favorites.js, manifest, icons — by the live FastAPI
+server on the VPS, which additionally serves dynamic, stop-centric pages at
+/stops/{code} with live data and lazy-fetched schedules for ANY line;
+see server/app.py).
 
-Stop pages are namespaced under their line, since the same physical stop
-code can be served by more than one line: docs/lines/<line>/stops/<code>/.
+Stop pages here are namespaced under their line, since the same physical
+stop code can be served by more than one line: docs/lines/<line>/stops/<code>/.
 Each line also gets an overview page at docs/lines/<line>/index.html
 listing its stops in order, per direction.
 
-Terminus stops show two kinds of sections, matching how the official site's
-own live "Virtual timetable" treats them: a "Departs toward ..." section for
-the route that starts there, and an "Arrives from ..." section for the route
-that ends there — these are genuinely different lists, not duplicates.
+Terminus stops only show a "Departs toward ..." section for the direction
+that actually starts there — the direction that only ends there (arrivals)
+is dropped, since a stop page is a boarding schedule, not an arrivals board.
 """
 import json
 import shutil
 from collections import defaultdict
 from pathlib import Path
 
+from templates import (
+    CSS,
+    CURRENT_HOUR_SCRIPT,
+    FAVORITES_JS,
+    LIVE_SCRIPT,
+    MANIFEST,
+    SERVICE_WORKER_JS,
+    esc,
+    format_times,
+    page,
+    times_table,
+)
+
 ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "data"
 OUT_DIR = ROOT / "docs"
-
-DAYTYPE_LABEL = {0: "Weekday", 1: "Weekend / Holiday"}
-
-# Highlights the current hour's row client-side, in Sofia local time
-# (independent of the visitor's own timezone).
-CURRENT_HOUR_SCRIPT = """
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-  var hour = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Sofia' }).format(new Date());
-  document.querySelectorAll('tr[data-hour="' + hour + '"]').forEach(function (row) {
-    row.classList.add('current-hour');
-    var th = row.querySelector('th');
-    if (th) th.insertAdjacentHTML('beforeend', ' <span class="now-badge">now</span>');
-  });
-});
-</script>
-"""
-
-FAVORITES_JS = """
-(function (global) {
-  var USER_ID_KEY = 'stm_user_id';
-
-  function getUserId() {
-    try {
-      var id = localStorage.getItem(USER_ID_KEY);
-      if (!id) {
-        id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
-        localStorage.setItem(USER_ID_KEY, id);
-      }
-      return id;
-    } catch (e) {
-      // storage unavailable (private mode etc.) — fall back to a per-tab id
-      if (!global.__stmSessionId) global.__stmSessionId = String(Date.now()) + Math.random().toString(16).slice(2);
-      return global.__stmSessionId;
-    }
-  }
-
-  function getFavorites() {
-    return fetch('/api/favorites?user_id=' + encodeURIComponent(getUserId()))
-      .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); });
-  }
-
-  function isFavorite(line, code, list) {
-    return list.some(function (f) { return f.line === line && f.code === code; });
-  }
-
-  function addFavorite(stop) {
-    return fetch('/api/favorites', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign({ user_id: getUserId() }, stop)),
-    });
-  }
-
-  function removeFavorite(line, code) {
-    var params = new URLSearchParams({ user_id: getUserId(), line: line, code: code });
-    return fetch('/api/favorites?' + params.toString(), { method: 'DELETE' });
-  }
-
-  function haversineKm(lat1, lon1, lat2, lon2) {
-    var R = 6371;
-    var dLat = (lat2 - lat1) * Math.PI / 180;
-    var dLon = (lon2 - lon1) * Math.PI / 180;
-    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    return 2 * R * Math.asin(Math.sqrt(a));
-  }
-
-  global.STM = {
-    getUserId: getUserId,
-    getFavorites: getFavorites,
-    isFavorite: isFavorite,
-    addFavorite: addFavorite,
-    removeFavorite: removeFavorite,
-    haversineKm: haversineKm,
-  };
-})(window);
-"""
 
 HOME_SCRIPT = """
 <script>
@@ -114,24 +51,23 @@ document.addEventListener('DOMContentLoaded', function () {
       }
       favSection.innerHTML = favs.map(function (f) {
         return '<li><a href="' + f.path + '">' + f.name + '</a> ' +
-          '<span class="code">Line ' + f.line + ' &middot; #' + f.code + '</span> ' +
-          '<button class="remove-fav" data-line="' + f.line + '" data-code="' + f.code + '">remove</button></li>';
+          '<span class="code">#' + f.code + '</span> ' +
+          '<button class="remove-fav" data-code="' + f.code + '">remove</button></li>';
       }).join('');
       favSection.querySelectorAll('.remove-fav').forEach(function (b) {
         b.addEventListener('click', function () {
-          STM.removeFavorite(b.dataset.line, b.dataset.code).then(renderFavorites);
+          STM.removeFavorite(b.dataset.code).then(renderFavorites);
         });
       });
       maybeRedirect(favs);
     }).catch(function () {
-      favSection.innerHTML = '<p class="muted">Could not load favorites right now.</p>';
+      favSection.innerHTML = '<p class="muted">Could not load favorites right now (needs the live server, not this static mirror).</p>';
     });
   }
   renderFavorites();
 
   function maybeRedirect(favs) {
     if (favs.length === 0 || !navigator.geolocation) return;
-
     var banner = document.getElementById('geo-banner');
     var cancelBtn = document.getElementById('geo-cancel');
     var cancelled = false;
@@ -143,7 +79,6 @@ document.addEventListener('DOMContentLoaded', function () {
       banner.hidden = true;
       cancelBtn.hidden = true;
     });
-
     navigator.geolocation.getCurrentPosition(function (pos) {
       if (cancelled) return;
       var lat = pos.coords.latitude, lon = pos.coords.longitude;
@@ -158,151 +93,27 @@ document.addEventListener('DOMContentLoaded', function () {
     }, { timeout: 8000 });
   }
 });
-</script>
-"""
 
-LIVE_SCRIPT = """
-<script>
 document.addEventListener('DOMContentLoaded', function () {
-  var el = document.getElementById('live-times');
-  if (!el) return;
-  var expectedLastStop = 'A' + STOP.code;
-
-  function load() {
-    fetch('/api/virtual/' + encodeURIComponent(STOP.code))
-      .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
-      .then(function (data) {
-        var entries = Object.keys(data).map(function (k) { return data[k]; })
-          .filter(function (e) { return e.name === STOP.line && e.last_stop !== expectedLastStop; });
-        if (entries.length === 0) {
-          el.innerHTML = '<p class="muted">No live buses currently tracked for this line here.</p>';
-          return;
-        }
-        el.innerHTML = entries.map(function (e) {
-          var mins = e.details.map(function (d) { return d.t + ' min'; }).join(', ');
-          return '<p class="live-entry"><strong>' + e.route_name + '</strong>: ' + mins + '</p>';
-        }).join('');
-      })
-      .catch(function () {
-        el.innerHTML = '<p class="muted">Live data unavailable right now.</p>';
-      });
-  }
-  load();
-  setInterval(load, 20000);
+  var btn = document.getElementById('nearest-btn');
+  var status = document.getElementById('nearest-status');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    if (!navigator.geolocation) { status.textContent = 'Geolocation not available in this browser.'; return; }
+    status.textContent = 'Finding your location\\u2026';
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      var params = new URLSearchParams({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+      fetch('/api/stops/nearest?' + params.toString())
+        .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
+        .then(function (stop) { location.href = '/stops/' + stop.code; })
+        .catch(function () { status.textContent = 'Could not reach the live server (this static mirror has no backend).'; });
+    }, function () {
+      status.textContent = 'Location permission denied.';
+    }, { timeout: 8000 });
+  });
 });
 </script>
 """
-
-PWA_HEAD = """
-<link rel="manifest" href="{base}/manifest.webmanifest">
-<meta name="theme-color" content="#BD202E">
-<link rel="icon" href="{base}/icons/icon-192.png">
-<link rel="apple-touch-icon" href="{base}/icons/icon-192.png">
-<script>
-if ('serviceWorker' in navigator) {{
-  window.addEventListener('load', function () {{
-    navigator.serviceWorker.register('{base}/service-worker.js').catch(function () {{}});
-  }});
-}}
-</script>
-"""
-
-MANIFEST = {
-    "name": "Sofia Transit Mirror",
-    "short_name": "SofiaTransit",
-    "description": "Static + live Sofia public transport schedules",
-    "start_url": "./index.html",
-    "scope": "./",
-    "display": "standalone",
-    "background_color": "#ffffff",
-    "theme_color": "#BD202E",
-    "icons": [
-        {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
-        {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
-    ],
-}
-
-SERVICE_WORKER_JS = """
-const CACHE = 'stm-v1';
-self.addEventListener('install', (e) => { self.skipWaiting(); });
-self.addEventListener('activate', (e) => { self.clients.claim(); });
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/api/')) return; // never cache live/favorites data
-  event.respondWith(
-    caches.open(CACHE).then(function (cache) {
-      return cache.match(event.request).then(function (cached) {
-        const fetchPromise = fetch(event.request).then(function (res) {
-          if (res.ok) cache.put(event.request, res.clone());
-          return res;
-        }).catch(function () { return cached; });
-        return cached || fetchPromise;
-      });
-    })
-  );
-});
-"""
-
-
-def esc(s):
-    return (
-        (s or "")
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-
-
-def page(title, body, base, extra_head=""):
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(title)}</title>
-<link rel="stylesheet" href="{base}/style.css">
-<script src="{base}/favorites.js"></script>
-{PWA_HEAD.format(base=base)}
-{extra_head}
-</head>
-<body>
-<header><a class="home-link" href="{base}/index.html">Sofia Transit Mirror</a></header>
-<main>
-{body}
-</main>
-<footer>Data mirrored from <a href="https://www.sofiatraffic.bg/en/public-transport" target="_blank" rel="noopener">sofiatraffic.bg</a> (Urban Mobility Center, Sofia Municipality). Unofficial, static snapshot. Departure times are the official fixed timetable, not live GPS predictions — expect a few minutes' drift from the live "Virtual timetable" on the official site.</footer>
-</body>
-</html>
-"""
-
-
-def format_times(times):
-    """Group a stop's raw time entries by weekend flag, sorted, deduped."""
-    by_daytype = defaultdict(set)
-    for t in times:
-        by_daytype[t["weekend"]].add(t["time"][:5])
-    return {k: sorted(v) for k, v in by_daytype.items()}
-
-
-def times_table(times_by_daytype):
-    parts = []
-    for wk in (0, 1):
-        times = times_by_daytype.get(wk)
-        if not times:
-            continue
-        hours = defaultdict(list)
-        for t in times:
-            h, m = t.split(":")
-            hours[h].append(m)
-        parts.append(f'<h3>{DAYTYPE_LABEL[wk]}</h3>')
-        parts.append('<table class="timetable"><tbody>')
-        for h in sorted(hours):
-            times_str = ", ".join(f"{h}:{m}" for m in sorted(hours[h]))
-            parts.append(f'<tr data-hour="{h}"><th>{h}:00</th><td>{times_str}</td></tr>')
-        parts.append("</tbody></table>")
-    if not parts:
-        parts.append("<p><em>No scheduled times found.</em></p>")
-    return "\n".join(parts)
 
 
 def main():
@@ -382,9 +193,6 @@ def main():
     # --- render stop pages, namespaced under their line ---
     for code, s in stops.items():
         for line_name, directions in s["lines"].items():
-            # departures first, then arrivals, so the useful "board here" list leads
-            # Only show sections where you can actually board here — a stop
-            # page is a boarding schedule, not an arrivals board.
             departures = [(n, i) for n, i in directions.items() if i["kind"] == "departure"]
             sections = []
             for direction_name, info in departures:
@@ -413,35 +221,35 @@ def main():
                     f'<a href="https://www.openstreetmap.org/?mlat={s["lat"]}&amp;mlon={s["lon"]}#map=18/{s["lat"]}/{s["lon"]}" '
                     f'target="_blank" rel="noopener">View on map</a>'
                 )
-            path = f"lines/{line_name}/stops/{code}/index.html"
+            path = f"/stops/{code}"  # points at the live server's stop-centric page
             stop_json = json.dumps({
-                "line": line_name,
                 "code": code,
                 "name": s["name_en"],
                 "lat": float(s["lat"]) if s["lat"] else None,
                 "lon": float(s["lon"]) if s["lon"] else None,
                 "path": path,
+                "line": line_name,
             })
-            fav_script = f"""
+            stop_script = f"<script>window.STOP = {stop_json};</script>"
+            fav_script = """
 <script>
-window.STOP = {stop_json};
-document.addEventListener('DOMContentLoaded', function () {{
+document.addEventListener('DOMContentLoaded', function () {
   var btn = document.getElementById('fav-btn');
-  function render() {{
-    STM.getFavorites().then(function (favs) {{
-      var fav = STM.isFavorite(STOP.line, STOP.code, favs);
+  function render() {
+    STM.getFavorites().then(function (favs) {
+      var fav = STM.isFavorite(STOP.code, favs);
       btn.textContent = fav ? '\\u2605 Remove from favorites' : '\\u2606 Save to favorites';
       btn.classList.toggle('is-fav', fav);
       btn.disabled = false;
-      btn.onclick = function () {{
+      btn.onclick = function () {
         btn.disabled = true;
-        var action = fav ? STM.removeFavorite(STOP.line, STOP.code) : STM.addFavorite(STOP);
+        var action = fav ? STM.removeFavorite(STOP.code) : STM.addFavorite(STOP);
         action.then(render);
-      }};
-    }}).catch(function () {{ btn.textContent = 'Favorites unavailable'; btn.disabled = true; }});
-  }}
+      };
+    }).catch(function () { btn.textContent = 'Favorites unavailable'; btn.disabled = true; });
+  }
   render();
-}});
+});
 </script>
 """
             body = (
@@ -451,7 +259,7 @@ document.addEventListener('DOMContentLoaded', function () {{
                 f'<p class="stop-actions">{map_link} <button id="fav-btn" class="fav-btn" disabled>☆ Save to favorites</button></p>'
                 f"{other_lines_html}"
                 '<section class="line-block live-block"><h2>Live now</h2>'
-                '<div id="live-times" class="live-times"><p class="muted">Loading live data…</p></div></section>'
+                '<div id="live-times" class="live-times"><p class="muted">Loading live data… (needs the live server)</p></div></section>'
                 + "\n".join(sections)
             )
             stop_dir = OUT_DIR / "lines" / line_name / "stops" / code
@@ -461,7 +269,7 @@ document.addEventListener('DOMContentLoaded', function () {{
                     f"Line {line_name} — {s['name_en']} ({code})",
                     body,
                     base="../../../..",
-                    extra_head=CURRENT_HOUR_SCRIPT + LIVE_SCRIPT + fav_script,
+                    extra_head=CURRENT_HOUR_SCRIPT + stop_script + LIVE_SCRIPT + fav_script,
                 )
             )
 
@@ -497,14 +305,15 @@ document.addEventListener('DOMContentLoaded', function () {{
     home_body = (
         "<h1>Sofia Transit Mirror</h1>"
         "<p>A static, link-friendly mirror of Sofia public transport schedules "
-        "sourced from sofiatraffic.bg. Pick a line below, then a stop — each "
-        "stop's URL includes its line, since the same physical stop can be "
-        "served by several lines with different timetables.</p>"
+        "sourced from sofiatraffic.bg, plus a live server for real-time boards, "
+        "any-line lookups, and favorites.</p>"
+        '<button id="nearest-btn" class="nearest-btn">\U0001F4CD Find nearest stop</button>'
+        '<p id="nearest-status" class="nearest-status"></p>'
         '<div id="geo-banner" class="geo-banner" hidden></div>'
         '<button id="geo-cancel" class="geo-cancel" hidden>Stay on this page</button>'
         '<h2>Your favorites</h2><ul id="favorites-list" class="stop-list"></ul>'
-        f"<h2>Lines</h2><ul class=\"line-list\">{line_items}</ul>"
-        f"<h2>Stops ({len(stops)})</h2><ul class=\"stop-list\">{stop_items}</ul>"
+        f"<h2>Pre-built lines</h2><ul class=\"line-list\">{line_items}</ul>"
+        f"<h2>Pre-built stops ({len(stops)})</h2><ul class=\"stop-list\">{stop_items}</ul>"
     )
     (OUT_DIR / "index.html").write_text(page("Sofia Transit Mirror", home_body, base=".", extra_head=HOME_SCRIPT))
 
@@ -524,47 +333,6 @@ document.addEventListener('DOMContentLoaded', function () {{
     stop_page_count = sum(len(s["lines"]) for s in stops.values())
     print(f"Built {stop_page_count} stop pages ({len(stops)} unique stops) and {len(line_stop_order)} line pages into {OUT_DIR}")
 
-
-CSS = """
-:root { color-scheme: light dark; --bg:#fff; --fg:#1a1a1a; --muted:#666; --accent:#BD202E; --border:#ddd; --now-bg: #fff3cd; --now-fg:#7a5b00; --arrival-bg: rgba(128,128,128,.08); }
-@media (prefers-color-scheme: dark) { :root { --bg:#14161a; --fg:#eee; --muted:#999; --border:#333; --now-bg:#4a3b00; --now-fg:#ffe083; } }
-* { box-sizing: border-box; }
-body { margin:0; background:var(--bg); color:var(--fg); font-family:-apple-system,Segoe UI,Roboto,sans-serif; line-height:1.5; }
-header { padding: 1rem 1.5rem; border-bottom:1px solid var(--border); }
-.home-link { font-weight:700; text-decoration:none; color:var(--accent); }
-main { max-width: 760px; margin: 0 auto; padding: 1.5rem; }
-footer { max-width: 760px; margin: 2rem auto; padding: 1rem 1.5rem; color:var(--muted); font-size:.85rem; border-top:1px solid var(--border); }
-a { color: var(--accent); }
-h1 { margin-top:0; }
-.code { color: var(--muted); font-weight:400; font-size:.8em; }
-.native-name { color: var(--muted); margin-top:-0.75rem; }
-.breadcrumb { margin-bottom: .25rem; font-size: .9rem; }
-.also-served { color: var(--muted); font-size: .9rem; }
-.muted { color: var(--muted); }
-ul.stop-list, ol.stop-list, ul.line-list { list-style:none; padding:0; }
-ul.stop-list li, ol.stop-list li, ul.line-list li { padding:.35rem 0; border-bottom:1px solid var(--border); }
-.badge { background:var(--accent); color:#fff; border-radius:4px; padding:.1rem .4rem; font-size:.75rem; }
-.stop-actions { display:flex; align-items:center; gap:1rem; }
-.fav-btn { border:1px solid var(--accent); background:transparent; color:var(--accent); border-radius:6px; padding:.4rem .8rem; font-size:.9rem; cursor:pointer; }
-.fav-btn.is-fav { background:var(--accent); color:#fff; }
-.remove-fav { border:none; background:none; color:var(--muted); text-decoration:underline; font-size:.8rem; cursor:pointer; padding:0 0 0 .5rem; }
-.geo-banner { background:var(--now-bg); color:var(--now-fg); padding:.6rem .9rem; border-radius:6px; margin-bottom:.5rem; }
-.geo-cancel { border:none; background:none; color:var(--muted); text-decoration:underline; font-size:.85rem; cursor:pointer; margin-bottom:1rem; padding:0; }
-.line-block { margin: 1.5rem 0; padding-top: 1rem; border-top: 1px solid var(--border); }
-.line-block h2 { display:flex; align-items:center; gap:.5rem; font-size:1.1rem; }
-.kind-badge { font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:3px; padding:.15rem .4rem; }
-.kind-badge.departure { background:var(--accent); color:#fff; }
-.kind-badge.arrival { background:var(--arrival-bg); color:var(--muted); }
-table.timetable { border-collapse:collapse; width:100%; margin:.5rem 0 1rem; font-size: 1.05rem; }
-table.timetable tr { border-bottom: 1px solid var(--border); }
-table.timetable th { text-align:left; padding:.4rem .75rem .4rem 0; vertical-align:top; color:var(--muted); font-weight:600; white-space:nowrap; width:5rem; }
-table.timetable td { padding:.4rem 0; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
-tr.current-hour { background: var(--now-bg); }
-tr.current-hour th { color: var(--now-fg); }
-.now-badge { display:inline-block; background:var(--accent); color:#fff; font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border-radius:3px; padding:.1rem .35rem; margin-left:.4rem; vertical-align:middle; }
-.live-block { background: rgba(189,32,46,.06); border-radius:8px; padding:1rem; border-top:none; }
-.live-entry { margin:.3rem 0; }
-"""
 
 if __name__ == "__main__":
     main()

@@ -11,7 +11,6 @@
       }
       return id;
     } catch (e) {
-      // storage unavailable (private mode etc.) — fall back to a per-tab id
       if (!global.__stmSessionId) global.__stmSessionId = String(Date.now()) + Math.random().toString(16).slice(2);
       return global.__stmSessionId;
     }
@@ -22,8 +21,8 @@
       .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); });
   }
 
-  function isFavorite(line, code, list) {
-    return list.some(function (f) { return f.line === line && f.code === code; });
+  function isFavorite(code, list) {
+    return list.some(function (f) { return f.code === code; });
   }
 
   function addFavorite(stop) {
@@ -34,8 +33,8 @@
     });
   }
 
-  function removeFavorite(line, code) {
-    var params = new URLSearchParams({ user_id: getUserId(), line: line, code: code });
+  function removeFavorite(code) {
+    var params = new URLSearchParams({ user_id: getUserId(), code: code });
     return fetch('/api/favorites?' + params.toString(), { method: 'DELETE' });
   }
 

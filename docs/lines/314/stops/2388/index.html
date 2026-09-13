@@ -30,7 +30,7 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 });
 </script>
-
+<script>window.STOP = {"code": "2388", "name": "BL. 442 ZH.K. MLADOST-4", "lat": 42.6306019626, "lon": 23.3790341426, "path": "/stops/2388", "line": "314"};</script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   var el = document.getElementById('live-times');
@@ -42,14 +42,16 @@ document.addEventListener('DOMContentLoaded', function () {
       .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
       .then(function (data) {
         var entries = Object.keys(data).map(function (k) { return data[k]; })
-          .filter(function (e) { return e.name === STOP.line && e.last_stop !== expectedLastStop; });
+          .filter(function (e) { return e.last_stop !== expectedLastStop; })
+          .filter(function (e) { return !STOP.line || e.name === STOP.line; });
         if (entries.length === 0) {
-          el.innerHTML = '<p class="muted">No live buses currently tracked for this line here.</p>';
+          el.innerHTML = '<p class="muted">No live buses currently tracked here' + (STOP.line ? ' for this line' : '') + '.</p>';
           return;
         }
         el.innerHTML = entries.map(function (e) {
           var mins = e.details.map(function (d) { return d.t + ' min'; }).join(', ');
-          return '<p class="live-entry"><strong>' + e.route_name + '</strong>: ' + mins + '</p>';
+          var lineLabel = STOP.line ? '' : ('<span class="badge">' + e.name + '</span> ');
+          return '<p class="live-entry">' + lineLabel + '<strong>' + e.route_name + '</strong>: ' + mins + '</p>';
         }).join('');
       })
       .catch(function () {
@@ -62,18 +64,17 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 
 <script>
-window.STOP = {"line": "314", "code": "2388", "name": "BL. 442 ZH.K. MLADOST-4", "lat": 42.6306019626, "lon": 23.3790341426, "path": "lines/314/stops/2388/index.html"};
 document.addEventListener('DOMContentLoaded', function () {
   var btn = document.getElementById('fav-btn');
   function render() {
     STM.getFavorites().then(function (favs) {
-      var fav = STM.isFavorite(STOP.line, STOP.code, favs);
+      var fav = STM.isFavorite(STOP.code, favs);
       btn.textContent = fav ? '\u2605 Remove from favorites' : '\u2606 Save to favorites';
       btn.classList.toggle('is-fav', fav);
       btn.disabled = false;
       btn.onclick = function () {
         btn.disabled = true;
-        var action = fav ? STM.removeFavorite(STOP.line, STOP.code) : STM.addFavorite(STOP);
+        var action = fav ? STM.removeFavorite(STOP.code) : STM.addFavorite(STOP);
         action.then(render);
       };
     }).catch(function () { btn.textContent = 'Favorites unavailable'; btn.disabled = true; });
@@ -86,7 +87,7 @@ document.addEventListener('DOMContentLoaded', function () {
 <body>
 <header><a class="home-link" href="../../../../index.html">Sofia Transit Mirror</a></header>
 <main>
-<p class="breadcrumb"><a href="../../index.html">Line 314</a></p><h1>BL. 442 ZH.K. MLADOST-4 <span class="code">#2388</span></h1><p class="native-name">БЛ. 442 Ж.К. МЛАДОСТ-4</p><p class="stop-actions"><a href="https://www.openstreetmap.org/?mlat=42.6306019626&amp;mlon=23.3790341426#map=18/42.6306019626/23.3790341426" target="_blank" rel="noopener">View on map</a> <button id="fav-btn" class="fav-btn" disabled>☆ Save to favorites</button></p><section class="line-block live-block"><h2>Live now</h2><div id="live-times" class="live-times"><p class="muted">Loading live data…</p></div></section><section class="line-block"><h2>Departs toward Ж.К. МЛАДОСТ-2</h2><h3>Weekday</h3>
+<p class="breadcrumb"><a href="../../index.html">Line 314</a></p><h1>BL. 442 ZH.K. MLADOST-4 <span class="code">#2388</span></h1><p class="native-name">БЛ. 442 Ж.К. МЛАДОСТ-4</p><p class="stop-actions"><a href="https://www.openstreetmap.org/?mlat=42.6306019626&amp;mlon=23.3790341426#map=18/42.6306019626/23.3790341426" target="_blank" rel="noopener">View on map</a> <button id="fav-btn" class="fav-btn" disabled>☆ Save to favorites</button></p><section class="line-block live-block"><h2>Live now</h2><div id="live-times" class="live-times"><p class="muted">Loading live data… (needs the live server)</p></div></section><section class="line-block"><h2>Departs toward Ж.К. МЛАДОСТ-2</h2><h3>Weekday</h3>
 <table class="timetable"><tbody>
 <tr data-hour="05"><th>05:00</th><td>05:29</td></tr>
 <tr data-hour="06"><th>06:00</th><td>06:12, 06:45</td></tr>
