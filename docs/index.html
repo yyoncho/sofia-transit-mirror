@@ -21,6 +21,8 @@ if ('serviceWorker' in navigator) {
 
 
 <script>
+var WALK_KM = 1.5; // ~15-18 min walk at a normal pace
+
 document.addEventListener('DOMContentLoaded', function () {
   var favSection = document.getElementById('favorites-list');
 
@@ -40,54 +42,57 @@ document.addEventListener('DOMContentLoaded', function () {
           STM.removeFavorite(b.dataset.code).then(renderFavorites);
         });
       });
-      maybeRedirect(favs);
     }).catch(function () {
       favSection.innerHTML = '<p class="muted">Could not load favorites right now (needs the live server, not this static mirror).</p>';
     });
   }
   renderFavorites();
-
-  function maybeRedirect(favs) {
-    if (favs.length === 0 || !navigator.geolocation) return;
-    var banner = document.getElementById('geo-banner');
-    var cancelBtn = document.getElementById('geo-cancel');
-    var cancelled = false;
-    banner.hidden = false;
-    cancelBtn.hidden = false;
-    banner.textContent = 'Finding your nearest favorite stop\u2026';
-    cancelBtn.addEventListener('click', function () {
-      cancelled = true;
-      banner.hidden = true;
-      cancelBtn.hidden = true;
-    });
-    navigator.geolocation.getCurrentPosition(function (pos) {
-      if (cancelled) return;
-      var lat = pos.coords.latitude, lon = pos.coords.longitude;
-      var nearest = favs.map(function (f) {
-        return { f: f, d: STM.haversineKm(lat, lon, f.lat, f.lon) };
-      }).sort(function (a, b) { return a.d - b.d; })[0];
-      banner.innerHTML = 'Nearest favorite: <strong>' + nearest.f.name + '</strong> (' + nearest.d.toFixed(1) + ' km) \u2014 opening\u2026';
-      setTimeout(function () { if (!cancelled) location.href = nearest.f.path; }, 1800);
-    }, function () {
-      banner.hidden = true;
-      cancelBtn.hidden = true;
-    }, { timeout: 8000 });
-  }
 });
 
 document.addEventListener('DOMContentLoaded', function () {
   var btn = document.getElementById('nearest-btn');
   var status = document.getElementById('nearest-status');
+  var list = document.getElementById('nearby-list');
   if (!btn) return;
+
   btn.addEventListener('click', function () {
+    list.innerHTML = '';
     if (!navigator.geolocation) { status.textContent = 'Geolocation not available in this browser.'; return; }
     status.textContent = 'Finding your location\u2026';
     navigator.geolocation.getCurrentPosition(function (pos) {
-      var params = new URLSearchParams({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-      fetch('/api/stops/nearest?' + params.toString())
-        .then(function (r) { if (!r.ok) throw new Error('bad status'); return r.json(); })
-        .then(function (stop) { location.href = '/stops/' + stop.code; })
-        .catch(function () { status.textContent = 'Could not reach the live server (this static mirror has no backend).'; });
+      var lat = pos.coords.latitude, lon = pos.coords.longitude;
+      status.textContent = '';
+      Promise.all([
+        fetch('/api/stops/nearby?' + new URLSearchParams({ lat: lat, lon: lon, limit: 8 })).then(function (r) { return r.ok ? r.json() : []; }),
+        STM.getFavorites().catch(function () { return []; }),
+      ]).then(function (both) {
+        var nearby = both[0], favs = both[1];
+
+        var favNearby = favs
+          .map(function (f) { return Object.assign({}, f, { distance_km: STM.haversineKm(lat, lon, f.lat, f.lon), isFavorite: true }); })
+          .filter(function (f) { return f.distance_km <= WALK_KM; });
+
+        var favCodes = favNearby.map(function (f) { return f.code; });
+        var rest = nearby
+          .filter(function (s) { return favCodes.indexOf(s.code) === -1; })
+          .map(function (s) { return Object.assign({}, s, { isFavorite: false }); });
+
+        var picks = favNearby.sort(function (a, b) { return a.distance_km - b.distance_km; })
+          .concat(rest.sort(function (a, b) { return a.distance_km - b.distance_km; }))
+          .slice(0, 5);
+
+        if (picks.length === 0) {
+          status.textContent = 'No stops found nearby.';
+          return;
+        }
+        list.innerHTML = picks.map(function (s) {
+          var star = s.isFavorite ? '<span class="badge">\u2605 favorite</span> ' : '';
+          return '<li><a href="/stops/' + s.code + '">' + star + s.name + '</a> ' +
+            '<span class="code">#' + s.code + ' \u00b7 ' + s.distance_km.toFixed(2) + ' km</span></li>';
+        }).join('');
+      }).catch(function () {
+        status.textContent = 'Could not reach the live server (this static mirror has no backend).';
+      });
     }, function () {
       status.textContent = 'Location permission denied.';
     }, { timeout: 8000 });
@@ -131,7 +136,7 @@ document.addEventListener('DOMContentLoaded', function () {
 <body>
 <header><a class="home-link" href="./index.html">Sofia Transit Mirror</a></header>
 <main>
-<h1>Sofia Transit Mirror</h1><p>A static, link-friendly mirror of Sofia public transport schedules sourced from sofiatraffic.bg, plus a live server for real-time boards, any-line lookups, and favorites.</p><button id="nearest-btn" class="nearest-btn">📍 Find nearest stop</button><p id="nearest-status" class="nearest-status"></p><div id="geo-banner" class="geo-banner" hidden></div><button id="geo-cancel" class="geo-cancel" hidden>Stay on this page</button><h2>Find a line or stop</h2><input id="search-box" class="search-box" type="text" placeholder="Line number or stop name…" autocomplete="off"><ul id="search-results" class="search-results"></ul><h2>Your favorites</h2><ul id="favorites-list" class="stop-list"></ul><h2>Pre-built lines</h2><ul class="line-list"><li><a href="lines/314/index.html">Line 314</a> <span class="badge">bus</span></li></ul><h2>Pre-built stops (59)</h2><ul class="stop-list"><li>115-TI POSHTENSKI KLON <span class="code">#1759</span> &mdash; <a href="lines/314/stops/1759/index.html">314</a></li>
+<h1>Sofia Transit Mirror</h1><p>A static, link-friendly mirror of Sofia public transport schedules sourced from sofiatraffic.bg, plus a live server for real-time boards, any-line lookups, and favorites.</p><button id="nearest-btn" class="nearest-btn">📍 Find nearest stop</button><p id="nearest-status" class="nearest-status"></p><ul id="nearby-list" class="stop-list"></ul><h2>Find a line or stop</h2><input id="search-box" class="search-box" type="text" placeholder="Line number or stop name…" autocomplete="off"><ul id="search-results" class="search-results"></ul><h2>Your favorites</h2><ul id="favorites-list" class="stop-list"></ul><h2>Pre-built lines</h2><ul class="line-list"><li><a href="lines/314/index.html">Line 314</a> <span class="badge">bus</span></li></ul><h2>Pre-built stops (59)</h2><ul class="stop-list"><li>115-TI POSHTENSKI KLON <span class="code">#1759</span> &mdash; <a href="lines/314/stops/1759/index.html">314</a></li>
 <li>115-TI POSHTENSKI KLON <span class="code">#1760</span> &mdash; <a href="lines/314/stops/1760/index.html">314</a></li>
 <li>131-VO SOU <span class="code">#0009</span> &mdash; <a href="lines/314/stops/0009/index.html">314</a></li>
 <li>131-VO SOU <span class="code">#0008</span> &mdash; <a href="lines/314/stops/0008/index.html">314</a></li>

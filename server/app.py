@@ -175,6 +175,24 @@ def nearest_stop(lat: float, lon: float):
     }
 
 
+@app.get("/api/stops/nearby")
+def nearby_stops(lat: float, lon: float, limit: int = 8):
+    ranked = sorted(
+        (
+            {
+                "code": s["code"],
+                "name": s["name"],
+                "lat": float(s["latitude"]),
+                "lon": float(s["longitude"]),
+                "distance_km": round(haversine_km(lat, lon, float(s["latitude"]), float(s["longitude"])), 2),
+            }
+            for s in ALL_STOPS
+        ),
+        key=lambda s: s["distance_km"],
+    )
+    return ranked[:limit]
+
+
 @app.get("/api/stops/search")
 def search_stops(q: str, limit: int = 15):
     ql = q.strip().lower()
